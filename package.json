@@ -1,0 +1,36 @@
+{
+  "name": "@mastermind/parallax",
+  "version": "1.0.0",
+  "description": "Differential cache analysis toolkit for web cache poisoning and deception",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "parallax": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "lint": "eslint src --ext .ts",
+    "cli": "ts-node src/cli.ts"
+  },
+  "keywords": [
+    "cache-poisoning",
+    "cache-deception",
+    "cdn-security",
+    "web-security",
+    "differential-analysis"
+  ],
+  "author": "mastermind",
+  "license": "MIT",
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0",
+    "eslint": "^8.55.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0"
+  }
+}
