@@ -64,7 +64,7 @@ describe('CachePoison', () => {
         sizeDeltaPercent: 0,
         newHeaders: [],
         securityHeaderChanges: {
-          'content-security-policy': { before: "default-src 'self'", after: "default-src 'none'" }
+          'strict-transport-security': { before: 'max-age=31536000', after: 'max-age=0' }
         },
       },
       oracle: {} as any,
@@ -74,6 +74,32 @@ describe('CachePoison', () => {
       blastRadius: { scope: 'global', deviceTypes: ['desktop'] },
     });
     expect(finding.classification).toBe('security_header_poisoning');
+    expect(finding.attackClass).toBe('header_poison');
+  });
+
+  it('should classify weakened CSP as csp_bypass', () => {
+    const poison = new CachePoison({ target: 'https://example.com' });
+    const finding = poison.classifyExploit({
+      inputType: 'header',
+      inputName: 'x-forwarded-host',
+      canary: 'TEST999',
+      signals: {
+        bodyReflection: false,
+        headerReflection: {},
+        statusChanged: false,
+        sizeDeltaPercent: 0,
+        newHeaders: [],
+        securityHeaderChanges: {
+          'content-security-policy': { before: "default-src 'self'", after: "default-src 'none'" }
+        },
+      },
+      oracle: {} as any,
+      classification: 'unknown',
+      attackClass: 'content_poison',
+      confidence: 'POSSIBLE',
+      blastRadius: { scope: 'global', deviceTypes: ['desktop'] },
+    });
+    expect(finding.classification).toBe('csp_bypass');
     expect(finding.attackClass).toBe('header_poison');
   });
 

@@ -178,10 +178,15 @@ async function main(): Promise<void> {
     console.log(`\n=== Batch Complete ===`);
     console.log(`Scanned: ${urls.length} targets`);
     console.log(`Summary: ${summaryPath}`);
-    const totalFindings = allResults.reduce((sum, r) => sum + r.poison.reduce((s, p) => s + p.findings.length, 0), 0);
-    const totalChains = allResults.reduce((sum, r) => sum + r.weaponize.reduce((s, w) => s + w.chains.length, 0), 0);
-    console.log('\n=== Batch Complete ===');
-    console.log(`Targets scanned: ${targets.length}`);
+    const totalFindings = allResults.reduce(
+      (sum, r) => sum + ((r.poison ?? []).reduce((s: number, p: any) => s + p.findings.length, 0) ?? 0),
+      0
+    );
+    const totalChains = allResults.reduce(
+      (sum, r) => sum + ((r.weaponize ?? []).reduce((s: number, w: any) => s + w.chains.length, 0) ?? 0),
+      0
+    );
+    console.log(`Targets scanned: ${urls.length}`);
     console.log(`Total findings: ${totalFindings}`);
     console.log(`Total exploit chains: ${totalChains}`);
   } else if (command === 'discover') {

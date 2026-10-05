@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { CachePoisonConfig, PoisonFinding, PoisonResult, DiffSignal, CacheKeyOracle } from './types';
 import { HttpClient, HttpResponse } from './http-client';
 
@@ -167,6 +168,14 @@ export class CachePoison {
           }
         }
       }
+    }
+
+    // CP-DoS / WCP header-class payloads (separate, non-binary-search pass)
+    try {
+      const cpdosFindings = await this.testCPDoS(this.config.target);
+      this.findings.push(...cpdosFindings);
+    } catch {
+      // CP-DoS pass is best-effort; never fail the scan
     }
 
     return this.findings;
@@ -359,8 +368,7 @@ async testSingleHeader(header: string, baseline: HttpResponse): Promise<PoisonFi
   }
 
   private hashBody(body: string): string {
-    const crypto = await import('crypto');
-    return crypto.createHash('sha256').update(body).digest('hex');
+    return createHash('sha256').update(body).digest('hex');
   }
 
   classifyExploit(finding: PoisonFinding): PoisonFinding {

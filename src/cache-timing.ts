@@ -42,6 +42,8 @@ export class CacheTiming {
   constructor(config: CacheTimingConfig, httpClient?: HttpClient) {
     this.config = {
       target: config.target,
+      cookie: config.cookie ?? '',
+      headers: config.headers ?? {},
       pairsPerGroup: config.pairsPerGroup ?? 10,
       pValueThreshold: config.pValueThreshold ?? 0.01,
       outlierStddevMultiplier: config.outlierStddevMultiplier ?? 2,
@@ -96,16 +98,23 @@ export class CacheTiming {
     };
   }
 
+  private requestHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { ...(this.config.headers || {}) };
+    if (this.config.cookie) headers['cookie'] = this.config.cookie;
+    return headers;
+  }
+
   async sendPairedRequests(cacheBuster1: string, cacheBuster2: string): Promise<[number, number]> {
     const url1 = this.appendCacheBuster(this.config.target, cacheBuster1);
     const url2 = this.appendCacheBuster(this.config.target, cacheBuster2);
+    const headers = this.requestHeaders();
 
     const start1 = Date.now();
-    await this.http.get(url1);
+    await this.http.get(url1, headers);
     const t1 = Date.now() - start1;
 
     const start2 = Date.now();
-    await this.http.get(url2);
+    await this.http.get(url2, headers);
     const t2 = Date.now() - start2;
 
     return [t1, t2];
