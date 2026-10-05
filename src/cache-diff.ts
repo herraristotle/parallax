@@ -36,6 +36,48 @@ export function buildWCDUrls(baseUrl: string): Array<{ name: string; url: string
   });
 }
 
+/**
+ * Framework-specific delimiter bytes, probed before the rest of the byte range.
+ * Grounded: Spring `;` (matrix params), Rails `.` (format suffix),
+ * OpenLiteSpeed `%00` (null-byte normalization); remaining entries are each
+ * stack's well-known path-normalization separator.
+ */
+export const FRAMEWORK_DELIMITERS: Record<string, number[]> = {
+  spring: [0x3b, 0x2e, 0x2f],
+  rails: [0x2e, 0x3b, 0x2f],
+  openlitespeed: [0x00, 0x2e, 0x2f],
+  litespeed: [0x00, 0x2e, 0x2f],
+  nginx: [0x2f, 0x00, 0x3f],
+  php: [0x2f, 0x3f, 0x2e, 0x00],
+  django: [0x2f, 0x3b, 0x2e],
+  'asp.net': [0x3b, 0x2f, 0x2e],
+  'asp.net-core': [0x3b, 0x2f, 0x2e],
+  express: [0x2f, 0x3f, 0x2e],
+  flask: [0x2f, 0x3b, 0x2e],
+  laravel: [0x2f, 0x3f, 0x2e, 0x00],
+  wordpress: [0x2f, 0x3f, 0x2e],
+  drupal: [0x2f, 0x3f],
+  nextjs: [0x2f, 0x2e, 0x3f],
+  nuxt: [0x2f, 0x2e, 0x3f],
+};
+
+/**
+ * Byte probe order for a framework: its delimiter bytes first (clamped to
+ * range, deduped), then every remaining byte in range order. Unknown
+ * framework → plain range order (full coverage either way).
+ */
+export function frameworkByteOrder(framework: string | undefined, range: [number, number]): number[] {
+  const [lo, hi] = range;
+  const priority = (FRAMEWORK_DELIMITERS[(framework ?? '').trim().toLowerCase()] ?? [])
+    .filter(b => b >= lo && b <= hi);
+  const seen = new Set(priority);
+  const rest: number[] = [];
+  for (let b = lo; b <= hi; b++) {
+    if (!seen.has(b)) rest.push(b);
+  }
+  return [...priority, ...rest];
+}
+
 export class CacheDiff {
   public results: PathFuzzResult[] = [];
   private config: DiffConfig;
@@ -43,6 +85,7 @@ export class CacheDiff {
   private byteRange: [number, number];
   private positions: ('prefix' | 'infix' | 'suffix')[];
   private encodings: ('raw' | 'single' | 'double' | 'triple')[];
+  private framework?: string;
 
   constructor(cacheConfig: { target: string; cookie?: string; headers?: Record<string, string> }, diffConfig?: Partial<DiffConfig>, httpClient?: HttpClient) {
     this.http = httpClient || new HttpClient({ timeoutMs: 10000, rateLimitPerSec: 10 });
@@ -65,11 +108,16 @@ export class CacheDiff {
     return this.results;
   }
 
+  /** Framework fingerprint (from CacheProbe Stage 1) — enables delimiter priority. */
+  setFramework(name?: string): void {
+    this.framework = name;
+  }
+
   private async fuzzUrl(baseUrl: string): Promise<void> {
     const parsed = new URL(baseUrl);
     const path = parsed.pathname;
 
-    for (let byte = this.byteRange[0]; byte <= this.byteRange[1]; byte++) {
+    for (const byte of frameworkByteOrder(this.framework, this.byteRange)) {
       for (const position of this.positions) {
         for (const encoding of this.encodings) {
           const fuzzedUrl = this.injectByte(baseUrl, path, byte, position, encoding);

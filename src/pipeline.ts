@@ -64,6 +64,8 @@ export class ParallaxPipeline {
     // Update poison config with detected CDN and framework
     (this.poison as any).config.cdnName = probeResult.cdn.name;
     (this.poison as any).config.framework = probeResult.framework.name.toLowerCase();
+    // Diff probes framework delimiters first (framework-aware byte priority)
+    this.diff.setFramework(probeResult.framework.name);
 
     // Stage 2: Header Harvest (BigQuery/HTTP Archive wordlist)
     console.log('[Parallax] Stage 2: Header Harvesting');

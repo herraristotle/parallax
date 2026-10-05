@@ -1,7 +1,7 @@
 export { ParallaxPipeline } from './pipeline';
 export { CacheProbe } from './cache-probe';
 export { HeaderHarvest } from './header-harvest';
-export { CacheDiff, WCD_PAYLOADS, buildWCDUrls } from './cache-diff';
+export { CacheDiff, WCD_PAYLOADS, buildWCDUrls, FRAMEWORK_DELIMITERS, frameworkByteOrder } from './cache-diff';
 export { CachePoison } from './cache-poison';
 export { Weaponize } from './weaponize';
 export { HttpClient } from './http-client';

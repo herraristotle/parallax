@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { CacheDiff, WCD_PAYLOADS, buildWCDUrls } from '../cache-diff';
+import { CacheDiff, WCD_PAYLOADS, buildWCDUrls, FRAMEWORK_DELIMITERS, frameworkByteOrder } from '../cache-diff';
+import type { HttpClient, HttpResponse } from '../http-client';
 
 describe('CacheDiff', () => {
   it('should correctly inject percent-encoded bytes', () => {
@@ -108,5 +109,71 @@ describe('CacheDiff', () => {
     const names = WCD_PAYLOADS.map(p => p.name);
     expect(names).toContain('encoded-newline');
     expect(names).toContain('double-encoded-slash');
+  });
+});
+
+describe('framework-aware delimiter priority (B-12)', () => {
+  const RANGE: [number, number] = [0x00, 0xff];
+
+  it('probes Spring `;` (0x3B) before the rest of the range', () => {
+    const order = frameworkByteOrder('Spring', RANGE);
+    expect(order[0]).toBe(0x3b);
+    expect(order).toHaveLength(256);
+    expect(new Set(order).size).toBe(256);
+  });
+
+  it('probes Rails `.` first, OpenLiteSpeed `%00` first, nginx `/` first', () => {
+    expect(frameworkByteOrder('rails', RANGE)[0]).toBe(0x2e);
+    expect(frameworkByteOrder('OpenLiteSpeed', RANGE)[0]).toBe(0x00);
+    expect(frameworkByteOrder('nginx', RANGE)[0]).toBe(0x2f);
+  });
+
+  it('covers PHP, Django, ASP.NET with framework-relevant delimiters up front', () => {
+    const php = frameworkByteOrder('php', RANGE);
+    expect(php.slice(0, 4)).toEqual([0x2f, 0x3f, 0x2e, 0x00]);
+    const django = frameworkByteOrder('django', RANGE);
+    expect(django[0]).toBe(0x2f);
+    expect(django).toContain(0x3b);
+    const asp = frameworkByteOrder('asp.net', RANGE);
+    expect(asp[0]).toBe(0x3b);
+  });
+
+  it('unknown framework → plain ascending range order', () => {
+    const order = frameworkByteOrder('cobol-cics', RANGE);
+    expect(order[0]).toBe(0x00);
+    expect(order[255]).toBe(0xff);
+  });
+
+  it('clamps priority bytes to the configured byteRange', () => {
+    const order = frameworkByteOrder('spring', [0x40, 0x50]);
+    expect(order[0]).toBe(0x40); // 0x3B below range → dropped, plain order
+    expect(order).toHaveLength(17);
+  });
+
+  it('fuzzes in priority order end-to-end (stub client)', async () => {
+    const client = {
+      get: async (url: string): Promise<HttpResponse> => ({
+        status: url.includes('%') || /[;<]/.test(new URL(url).pathname.slice(1)) ? 404 : 200,
+        headers: {},
+        body: url === 'https://example.com/page' ? 'ok' : 'missing',
+        fromCache: false,
+      }),
+    } as unknown as HttpClient;
+    const diff = new CacheDiff(
+      { target: 'https://example.com/page' },
+      { byteRange: [0x3a, 0x3c], encodings: ['single'], positions: ['suffix'] },
+      client,
+    );
+    diff.setFramework('spring');
+    await diff.run([{ url: 'https://example.com/page' }]);
+
+    // priority byte `;` (0x3B) must be fuzzed before `:` (0x3A) and `<` (0x3C)
+    const order = diff.getResults().map(r => r.byte);
+    expect(order).toEqual([0x3b, 0x3a, 0x3c]);
+  });
+
+  it('FRAMEWORK_DELIMITERS keys normalize case-insensitively', () => {
+    expect(Object.keys(FRAMEWORK_DELIMITERS)).toContain('asp.net');
+    expect(FRAMEWORK_DELIMITERS['spring']).toEqual([0x3b, 0x2e, 0x2f]);
   });
 });
