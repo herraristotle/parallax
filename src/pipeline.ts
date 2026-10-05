@@ -3,6 +3,7 @@ import { CacheProbe } from './cache-probe';
 import { HeaderHarvest } from './header-harvest';
 import { CacheDiff, buildWCDUrls } from './cache-diff';
 import { CachePoison } from './cache-poison';
+import { CacheDeception } from './cache-deception';
 import { Weaponize } from './weaponize';
 import { Discover } from './discover';
 import { CacheTiming } from './cache-timing';
@@ -87,6 +88,34 @@ export class ParallaxPipeline {
     checkTimeBudget();
     const discoverResult = await this.discover(probeResult);
 
+    // Stage 4b: Web Cache Deception (Gil 2017) — cache stores dynamic content
+    // under static-looking suffixes. Runs over candidate dynamic endpoints
+    // (discovered URLs + target itself); cheap and best-effort.
+    let deceptionFindings: PipelineResult['deception'];
+    if (this.config.enableDeception !== false) {
+      console.log('[Parallax] Stage 4b: Web Cache Deception probing');
+      checkTimeBudget();
+      try {
+        const deception = new CacheDeception({
+          target: this.config.target,
+          cookie: this.config.cookie,
+          headers: this.config.headers,
+        }, this.httpClient);
+        const candidates = [
+          this.config.target,
+          ...discoverResult.cachedUrls.map(u => u.url),
+          ...discoverResult.uncacheableUrls,
+        ];
+        const findings = await deception.run(candidates);
+        if (findings.length > 0) {
+          deceptionFindings = findings;
+          console.log(`[Parallax]   ${findings.length} deception finding(s), ${findings.filter(f => f.confirmed).length} confirmed`);
+        }
+      } catch {
+        // Deception pass is best-effort; never fail the scan.
+      }
+    }
+
     // Stage 5: Diff (WCD) - Byte-level path fuzzing + WCD payloads
     if (this.config.enableDiff !== false) {
       console.log('[Parallax] Stage 5: Byte-level Path Delimiter Fuzzing + WCD');
@@ -116,22 +145,23 @@ export class ParallaxPipeline {
     const result: PipelineResult = {
       probe: probeResult,
       discover: discoverResult,
-      diff: this.diff.results.length > 0 
-        ? [{ url: this.config.target, fuzzResults: this.diff.results, unkeyedDelimiters: this.diff.getUnkeyedDelimiters() }] 
+      diff: this.diff.results.length > 0
+        ? [{ url: this.config.target, fuzzResults: this.diff.results, unkeyedDelimiters: this.diff.getUnkeyedDelimiters() }]
         : [],
-      poison: this.poison.findings.length > 0 
-        ? [{ 
-            findings: this.poison.findings, 
-            statistics: this.calculatePoisonStats() 
-          }] 
+      poison: this.poison.findings.length > 0
+        ? [{
+            findings: this.poison.findings,
+            statistics: this.calculatePoisonStats()
+          }]
         : [],
-      weaponize: this.weaponize.results.length > 0 
-        ? [{ 
-            chains: this.weaponize.results, 
-            summary: this.calculateWeaponizeSummary() 
-          }] 
+      weaponize: this.weaponize.results.length > 0
+        ? [{
+            chains: this.weaponize.results,
+            summary: this.calculateWeaponizeSummary()
+          }]
         : []
     };
+    if (deceptionFindings) result.deception = deceptionFindings;
 
     console.log('[Parallax] Pipeline complete');
     return result;

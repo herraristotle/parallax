@@ -26,6 +26,7 @@ Options:
   --no-timing               Disable hidden cache timing detection
   --no-diff                 Disable byte-level diff fuzzing
   --no-poison               Disable header poisoning scan
+  --no-deception            Disable web cache deception probing
   --no-weaponize            Disable exploit chain generation
 `;
 
@@ -86,6 +87,9 @@ async function main(): Promise<void> {
         break;
       case '--no-poison':
         config.enablePoison = false;
+        break;
+      case '--no-deception':
+        config.enableDeception = false;
         break;
       case '--no-weaponize':
         config.enableWeaponize = false;

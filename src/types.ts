@@ -59,6 +59,7 @@ export interface PipelineConfig {
   enableDiff?: boolean;
   enablePoison?: boolean;
   enableWeaponize?: boolean;
+  enableDeception?: boolean;
 }
 
 export interface PipelineResult {
@@ -67,6 +68,26 @@ export interface PipelineResult {
   diff: DiffResult[];
   poison: PoisonResult[];
   weaponize: WeaponizeResult[];
+  /** Web Cache Deception findings (Gil 2017) — present when Stage 4b ran. */
+  deception?: DeceptionFinding[];
+}
+
+export interface DeceptionFinding {
+  /** Original dynamic endpoint the deceptive suffix was appended to. */
+  endpoint: string;
+  /** The deceptive URL that got cached. */
+  attackUrl: string;
+  /** Suffix/pattern that triggered caching (e.g. `.css`). */
+  pattern: string;
+  /** Server echoed the dynamic body under the deceptive URL. */
+  originServed: boolean;
+  /** Cache stored the response (confirmed by second-request HIT evidence). */
+  cached: boolean;
+  /** Cache-control / CDN header evidence, lowercased. */
+  cacheEvidence: Record<string, string>;
+  /** Content-type the origin returned for the deceptive URL. */
+  originContentType?: string;
+  confirmed: boolean;
 }
 
 export interface ProbeResult {

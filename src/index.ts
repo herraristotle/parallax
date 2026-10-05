@@ -7,6 +7,7 @@ export { Weaponize } from './weaponize';
 export { HttpClient } from './http-client';
 export { CacheTiming } from './cache-timing';
 export { Discover } from './discover';
+export { CacheDeception } from './cache-deception';
 export { ParallaxConfigLoader } from './config';
 export { Logger } from './logger';
 export { ReportExporter } from './report';
@@ -61,4 +62,5 @@ export type {
   CachedUrl,
   DiffResult,
   PoisonResult,
+  DeceptionFinding,
 } from './types';
