@@ -141,6 +141,11 @@ export class CachePoison {
     this.http = httpClient || new HttpClient({ timeoutMs: 10000, rateLimitPerSec: 10 });
   }
 
+  /** Wire the Stage-2 harvested wordlist (HCache/BigQuery-derived) — replaces synthetic fallback. */
+  setHarvestedWordlist(wordlist: { fast: string[]; all: string[] }): void {
+    this.config.wordlist = wordlist;
+  }
+
   async run(cachedUrls: Array<{ url: string }>, wordlistTier: 'fast' | 'all' = 'fast'): Promise<PoisonFinding[]> {
     const headers = this.getHeaderWordlist(wordlistTier);
     const cdnName = this.config.cdnName || 'unknown';
@@ -181,21 +186,37 @@ export class CachePoison {
     return this.findings;
   }
 
-  private getHeaderWordlist(tier: 'fast' | 'all'): string[] {
-    if (tier === 'fast') {
-      return [
-        'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-for', 'x-forwarded-port',
-        'x-forwarded-prefix', 'x-original-url', 'x-rewrite-url', 'x-host',
-        'forwarded', 'origin', 'x-forwarded-scheme', 'x-url-scheme',
-        'x-forwarded-ssl', 'x-forwarded-path', 'x-http-method-override',
-        'x-method-override', 'content-type', 'accept', 'accept-encoding',
-        'user-agent', 'referer', 'cookie', 'x-requested-with',
-        'x-csrf-token', 'x-xsrf-token', 'authorization',
-        'x-api-key', 'x-client-id', 'x-tenant-id', 'x-request-id',
-        'x-correlation-id', 'x-trace-id', 'baggage', 'traceparent',
-      ];
+  /**
+   * Header wordlist for the poisoning pass.
+   * `fast`: curated CDN-priority headers first, then harvested top-tier list.
+   * `all`: curated + full harvested list (HCache/BigQuery) — real headers only,
+   * no synthetic filler. Falls back to curated when Stage 2 harvest is absent.
+   */
+  getHeaderWordlist(tier: 'fast' | 'all'): string[] {
+    const curated = [
+      'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-for', 'x-forwarded-port',
+      'x-forwarded-prefix', 'x-original-url', 'x-rewrite-url', 'x-host',
+      'forwarded', 'origin', 'x-forwarded-scheme', 'x-url-scheme',
+      'x-forwarded-ssl', 'x-forwarded-path', 'x-http-method-override',
+      'x-method-override', 'content-type', 'accept', 'accept-encoding',
+      'user-agent', 'referer', 'cookie', 'x-requested-with',
+      'x-csrf-token', 'x-xsrf-token', 'authorization',
+      'x-api-key', 'x-client-id', 'x-tenant-id', 'x-request-id',
+      'x-correlation-id', 'x-trace-id', 'baggage', 'traceparent',
+    ];
+    const harvested = this.config.wordlist;
+    if (!harvested) return curated;
+    const extra = tier === 'fast' ? harvested.fast : harvested.all;
+    const seen = new Set(curated.map(h => h.toLowerCase()));
+    const merged = [...curated];
+    for (const header of extra) {
+      const key = header.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(header);
+      }
     }
-    return [...this.getHeaderWordlist('fast'), ...Array(9865).fill(0).map((_, i) => `x-custom-${i}`)];
+    return merged;
   }
 
   private reorderHeaders(headers: string[], cdnName: string): string[] {

@@ -69,6 +69,7 @@ export class ParallaxPipeline {
     console.log('[Parallax] Stage 2: Header Harvesting');
     checkTimeBudget();
     const harvestResult = await this.harvest.run();
+    this.poison.setHarvestedWordlist(harvestResult);
 
     // Stage 3: Timing (Hidden Cache Detection)
     if (this.config.enableTiming !== false) {

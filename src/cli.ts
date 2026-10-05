@@ -19,7 +19,7 @@ Options:
   --profile <name>          Use config profile (fast/full/stealth)
   --cookie <cookie>         Cookie header for authenticated scans
   --header <key:value>      Custom header (repeatable)
-  --wordlist <tier>         Wordlist tier: fast (379) or all (10,244)
+  --wordlist <tier>         Wordlist tier: fast (curated + top harvest) or all (full harvest)
   --output <dir>            Output directory (default: ./output)
   --format <fmt>            Report format: json, markdown, html
   --log-level <level>       Log level: debug, info, warn, error

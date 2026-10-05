@@ -41,6 +41,8 @@ export interface CachePoisonConfig {
   cdnName?: string;
   wordlistTier?: 'fast' | 'all';
   framework?: string;
+  /** Harvested (BigQuery/HCache-derived) header wordlist from Stage 2. */
+  wordlist?: { fast: string[]; all: string[] };
 }
 
 export interface CacheDiffConfig {

@@ -122,4 +122,28 @@ describe('CachePoison', () => {
     expect(uas).toContain('Nikto/2.1.6');
     expect(uas).toContain('Burp Suite');
   });
+
+  it('should use harvested wordlist when wired, without synthetic filler', () => {
+    const poison = new CachePoison({ target: 'https://example.com' });
+
+    // Fallback (no Stage-2 harvest): real curated headers only, no x-custom-N.
+    const fallback = poison.getHeaderWordlist('all');
+    expect(fallback.length).toBeGreaterThan(0);
+    expect(fallback.some(h => h.startsWith('x-custom-'))).toBe(false);
+
+    poison.setHarvestedWordlist({
+      fast: ['x-harvested-top'],
+      all: ['x-harvested-top', 'x-harvested-full'],
+    });
+
+    const fast = poison.getHeaderWordlist('fast');
+    expect(fast).toContain('x-harvested-top');
+    expect(fast).toContain('x-forwarded-host');
+    expect(fast.indexOf('x-forwarded-host')).toBeLessThan(fast.indexOf('x-harvested-top'));
+
+    const all = poison.getHeaderWordlist('all');
+    expect(all).toContain('x-harvested-full');
+    expect(all.filter(h => h === 'x-forwarded-host').length).toBe(1);
+    expect(all.some(h => h.startsWith('x-custom-'))).toBe(false);
+  });
 });
