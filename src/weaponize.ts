@@ -1,13 +1,22 @@
-import { WeaponizeConfig, ExploitChain, PoisonFinding, BlastRadius, DeviceType, ProofOfConcept, ImpactAssessment } from './types';
+import { WeaponizeConfig, ExploitChain, PoisonFinding, BlastRadius, DeviceType, ProofOfConcept, ImpactAssessment, WeaponizePhaseResult } from './types';
 
 /**
  * Weaponize — Auto-classifies exploits and generates proof-of-concept chains
- * 
+ *
  * From Parallax blog: "Auto-classify exploits (XSS, redirect, CP-DoS, session fixation,
  * CSP bypass) and generate proof-of-concept chains."
+ *
+ * 4-phase generation (kimi.md parity): blast-radius evidence → impact
+ * classification → reproducible PoC (curl + steps) → report (prereqs +
+ * expected results), recorded as an explicit `phases` transcript per chain.
  */
 export class Weaponize {
   public results: ExploitChain[] = [];
+  private readonly targetUrl?: string;
+
+  constructor(targetUrl?: string) {
+    this.targetUrl = targetUrl;
+  }
 
   async run(findings: PoisonFinding[]): Promise<ExploitChain[]> {
     for (const finding of findings) {
@@ -17,17 +26,35 @@ export class Weaponize {
     return this.results;
   }
 
+  /** Real scan target (pipeline config) → oracle echo header → placeholder. */
+  private resolveTargetUrl(finding: PoisonFinding): string {
+    return this.targetUrl
+      ?? finding.oracle?.primeResponse?.headers?.['x-target-url']
+      ?? 'UNKNOWN';
+  }
+
   private generateChain(finding: PoisonFinding): ExploitChain {
+    const phases: WeaponizePhaseResult[] = [];
+
     const blastRadius = this.assessBlastRadius(finding);
+    phases.push({ phase: 'blast-radius', status: 'complete', detail: blastRadius.scope + (blastRadius.varyHeader ? ` (vary: ${blastRadius.varyHeader})` : '') });
+
     const impact = this.assessImpact(finding, blastRadius);
+    phases.push({ phase: 'classify', status: 'complete', detail: `${finding.classification} → ${impact.severity} (CVSS ${impact.cvss})` });
+
     const poc = this.generatePoC(finding, blastRadius);
+    phases.push({ phase: 'reproduce', status: 'complete', detail: 'curl PoC + verification steps generated' });
+
+    const prerequisites = this.getPrerequisites(finding);
+    phases.push({ phase: 'report', status: 'complete', detail: `${prerequisites.length} prerequisite(s), expected: ${poc.expectedResult.slice(0, 60)}…` });
 
     return {
       finding,
       poc,
       impact,
       blastRadius,
-      prerequisites: this.getPrerequisites(finding)
+      prerequisites,
+      phases
     };
   }
 
@@ -75,7 +102,8 @@ export class Weaponize {
       'nextjs': { severity: 'high', cvss: 8.0 },
       'invalidation': { severity: 'high', cvss: 7.5 },
       'surrogate': { severity: 'high', cvss: 7.0 },
-      'payload_split': { severity: 'high', cvss: 8.0 }
+      'payload_split': { severity: 'high', cvss: 8.0 },
+      'waf_poison': { severity: 'high', cvss: 7.5 }
     };
 
     const sev = severityMap[finding.classification] || { severity: 'medium', cvss: 5.0 };
@@ -112,14 +140,16 @@ export class Weaponize {
       'nextjs': 'Next.js ISR/SSG cache poisoning — framework-level cache stores wrong content type',
       'invalidation': 'Unauthenticated cache invalidation methods — PURGE/BAN/REFRESH without auth',
       'surrogate': 'Surrogate-Key/Control injection — purge group control and TTL extension',
-      'payload_split': 'Cross-input payload splitting — header + cookie combine to form full exploit in cached response'
+      'payload_split': 'Cross-input payload splitting — header + cookie combine to form full exploit in cached response',
+      'waf_poison': 'WAF rule poisoning — scanner signature or attack pattern cached as 403/401 for all visitors'
     };
     return descriptions[classification] || 'Cache poisoning with unverified impact';
   }
 
   private generatePoC(finding: PoisonFinding, blastRadius: BlastRadius): ProofOfConcept {
+    const targetUrl = this.resolveTargetUrl(finding);
     const steps: string[] = [
-      `1. Identify target endpoint: ${finding.oracle?.primeResponse.headers['x-target-url'] || finding.inputName}`,
+      `1. Identify target endpoint: ${targetUrl} (inject via ${finding.inputType} "${finding.inputName}")`,
       `2. Send poisoning request with ${finding.inputType} "${finding.inputName}" containing canary "${finding.canary}"`,
       `3. Verify cache poisoning: request same URL without ${finding.inputType}, observe canary in response`,
       `4. Confirm blast radius: test with different User-Agents (${blastRadius.deviceTypes.join(', ')})`,
@@ -138,7 +168,7 @@ export class Weaponize {
   }
 
   private buildCurlCommand(finding: PoisonFinding): string {
-    const targetUrl = finding.oracle?.primeResponse.headers['x-target-url'] || 'https://target.com/';
+    const targetUrl = this.resolveTargetUrl(finding);
     const header = finding.inputName;
     const canary = finding.canary;
     
@@ -193,6 +223,9 @@ export class Weaponize {
     }
     if (finding.classification === 'multi_cdn_mismatch') {
       prereqs.push('Target must have multiple CDN/proxy layers (e.g., Cloudflare + Varnish)');
+    }
+    if (finding.classification === 'waf_poison') {
+      prereqs.push('WAF rule must key on a cacheable input and store its block response at the edge');
     }
 
     return prereqs;

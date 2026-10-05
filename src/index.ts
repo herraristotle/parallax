@@ -58,6 +58,8 @@ export type {
   BlastRadius,
   DeviceType,
   WeaponizeResult,
+  WeaponizePhase,
+  WeaponizePhaseResult,
   DiscoverResult,
   CachedUrl,
   DiffResult,

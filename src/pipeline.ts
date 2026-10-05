@@ -42,7 +42,7 @@ export class ParallaxPipeline {
       cdnName: 'unknown', // Will be updated after probe
       framework: 'unknown'
     }, this.httpClient);
-    this.weaponize = new Weaponize();
+    this.weaponize = new Weaponize(config.target);
   }
 
   async run(): Promise<PipelineResult> {

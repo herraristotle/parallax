@@ -3,6 +3,20 @@ import { CachePoisonConfig, PoisonFinding, PoisonResult, DiffSignal, CacheKeyOra
 import { HttpClient, HttpResponse } from './http-client';
 
 /**
+ * CP-DoS payload classes → canonical ExploitClassification.
+ * Short payload-class names (import_hijack/oauth/multi_cdn) normalize to the
+ * full union members so weaponize severity/description maps always hit.
+ */
+export function canonicalClassification(payloadClass: string): string {
+  const map: Record<string, string> = {
+    import_hijack: 'import_hijacking',
+    oauth: 'oauth_hijacking',
+    multi_cdn: 'multi_cdn_mismatch',
+  };
+  return map[payloadClass] ?? payloadClass;
+}
+
+/**
  * CachePoison — Binary search header testing + exploit classification (WCP)
  *
  * From Parallax blog: "Testing 10,244 headers sequentially would require 10,244 requests.
@@ -486,7 +500,7 @@ async testSingleHeader(header: string, baseline: HttpResponse): Promise<PoisonFi
               securityHeaderChanges: {},
             },
             oracle: {} as any,
-            classification: payload.class as any,
+            classification: canonicalClassification(payload.class) as PoisonFinding['classification'],
             attackClass: payload.class === 'cpdos' ? 'cpdos' : 'header_poison',
             confidence: 'CONFIRMED',
             blastRadius: { scope: 'global', deviceTypes: ['desktop'] },

@@ -257,7 +257,17 @@ export type ExploitClassification =
   | 'invalidation'
   | 'surrogate'
   | 'payload_split'
+  | 'waf_poison'
   | 'unknown';
+
+/** 4-phase weaponize generation (kimi.md parity: "4-phase PoC generation"). */
+export type WeaponizePhase = 'blast-radius' | 'classify' | 'reproduce' | 'report';
+
+export interface WeaponizePhaseResult {
+  phase: WeaponizePhase;
+  status: 'complete';
+  detail: string;
+}
 
 export interface WeaponizeConfig {
   findings: PoisonFinding[];
@@ -270,6 +280,8 @@ export interface ExploitChain {
   impact: ImpactAssessment;
   blastRadius: BlastRadius;
   prerequisites: string[];
+  /** 4-phase generation transcript (blast-radius → classify → reproduce → report). */
+  phases: WeaponizePhaseResult[];
 }
 
 export interface ProofOfConcept {
