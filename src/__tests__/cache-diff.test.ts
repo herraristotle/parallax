@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CacheDiff, WCD_PAYLOADS, buildWCDUrls, FRAMEWORK_DELIMITERS, frameworkByteOrder } from '../cache-diff';
+import { CacheDiff, WCD_PAYLOADS, buildWCDUrls, FRAMEWORK_DELIMITERS, frameworkByteOrder, detectCsptSink } from '../cache-diff';
 import type { HttpClient, HttpResponse } from '../http-client';
 
 describe('CacheDiff', () => {
@@ -216,5 +216,44 @@ describe('batched fuzzing (B-22)', () => {
     await diff.run([{ url: 'https://example.com/page' }]);
     const bytes = diff.getResults().map(r => r.byte);
     expect(bytes).toEqual(Array.from({ length: 16 }, (_, i) => 0x40 + i));
+  });
+});
+
+describe('detectCsptSink (B-26)', () => {
+  it('flags reflection in a location assignment', () => {
+    const body = `<script>var p = window.location.pathname; location = "${'/fuzzed/'}" + p;</script>`;
+    const hit = detectCsptSink(body, '/fuzzed/');
+    expect(hit?.sink).toBe('location_assign');
+    expect(hit?.evidence).toContain('/fuzzed/');
+  });
+
+  it('flags reflection in a URL-bearing HTML attribute', () => {
+    const body = `<a href="/fuzzed/page">next</a>`;
+    expect(detectCsptSink(body, '/fuzzed/page')?.sink).toBe('url_attribute');
+  });
+
+  it('flags reflection in a URL constructor', () => {
+    const body = `const u = new URL("/fuzzed/x", location.origin);`;
+    expect(detectCsptSink(body, '/fuzzed/x')?.sink).toBe('url_constructor');
+  });
+
+  it('flags property assignment (.href =)', () => {
+    const body = `el.href = "/fuzzed/y";`;
+    expect(detectCsptSink(body, '/fuzzed/y')?.sink).toBe('property_assign');
+  });
+
+  it('returns undefined for reflection with no sink', () => {
+    const body = `<p>You requested /fuzzed/ which is not found.</p>`;
+    expect(detectCsptSink(body, '/fuzzed/')).toBeUndefined();
+  });
+
+  it('matches percent-encoded fuzzed path against decoded body', () => {
+    const body = `<script>location = "/./next";</script>`;
+    expect(detectCsptSink(body, '/%2E/')?.sink).toBe('location_assign');
+  });
+
+  it('ignores root path and empty bodies', () => {
+    expect(detectCsptSink('<a href="/">x</a>', '/')).toBeUndefined();
+    expect(detectCsptSink('', '/x')).toBeUndefined();
   });
 });

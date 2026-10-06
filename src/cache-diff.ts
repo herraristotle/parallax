@@ -78,6 +78,49 @@ export function frameworkByteOrder(framework: string | undefined, range: [number
   return [...priority, ...rest];
 }
 
+/** Client-side URL sinks whose attacker-controlled input enables CSPT chains. */
+const CSPT_SINKS: Array<[RegExp, string]> = [
+  [/\blocation\s*(?:\.\s*href)?\s*=/i, 'location_assign'],
+  [/\.(?:href|src|action)\s*=/i, 'property_assign'],
+  [/(?:href|src|action)\s*=\s*["'`]/i, 'url_attribute'],
+  [/\bwindow\.open\s*\(/i, 'window_open'],
+  [/\b(?:fetch|import|importScripts)\s*\(/i, 'fetch_import'],
+  [/\bnew\s+URL\s*\(/i, 'url_constructor'],
+  [/\bhistory\.(?:push|replace)State\s*\(/i, 'history_state'],
+  [/\bformaction\s*=/i, 'form_action'],
+];
+
+/**
+ * CSPT sink detection (B-26): locate the fuzzed path inside the response
+ * body and report when it sits in a client-side URL sink (JS assignment,
+ * URL constructor, or URL-bearing HTML attribute). Reflection without a
+ * sink returns undefined — no sink, no client-side traversal chain.
+ */
+export function detectCsptSink(
+  body: string,
+  fuzzedPath: string,
+): { sink: string; evidence: string } | undefined {
+  if (!body || !fuzzedPath || fuzzedPath === '/') return undefined;
+  const candidates = new Set<string>([fuzzedPath]);
+  try {
+    candidates.add(decodeURIComponent(fuzzedPath));
+  } catch { /* malformed encoding — raw candidate still tried */ }
+
+  for (const needle of candidates) {
+    let idx = body.indexOf(needle);
+    while (idx !== -1) {
+      const window = body.slice(Math.max(0, idx - 160), idx + needle.length + 160);
+      for (const [pattern, sink] of CSPT_SINKS) {
+        if (pattern.test(window)) {
+          return { sink, evidence: window.replace(/\s+/g, ' ').trim().slice(0, 240) };
+        }
+      }
+      idx = body.indexOf(needle, idx + 1);
+    }
+  }
+  return undefined;
+}
+
 export class CacheDiff {
   public results: PathFuzzResult[] = [];
   private config: DiffConfig;
@@ -149,6 +192,12 @@ export class CacheDiff {
             baseline.headers, fuzzedResp.headers,
             baseline.status, fuzzedResp.status
           );
+
+          // CSPT (B-26): reflected path sitting in a client-side URL sink
+          if (signals.bodyReflection) {
+            const cspt = detectCsptSink(fuzzedResp.body, new URL(fuzzedUrl).pathname);
+            if (cspt) signals.csptSink = cspt;
+          }
 
           if (this.hasSignal(signals)) {
             found.push({

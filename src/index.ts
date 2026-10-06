@@ -3,7 +3,7 @@ export { CacheProbe } from './cache-probe';
 export { HeaderHarvest } from './header-harvest';
 export { DEFAULT_HEADER_SQL, loadServiceAccount, mintAccessToken, runQuery } from './bigquery';
 export type { ServiceAccount, FetchLike } from './bigquery';
-export { CacheDiff, WCD_PAYLOADS, buildWCDUrls, FRAMEWORK_DELIMITERS, frameworkByteOrder } from './cache-diff';
+export { CacheDiff, WCD_PAYLOADS, buildWCDUrls, FRAMEWORK_DELIMITERS, frameworkByteOrder, detectCsptSink } from './cache-diff';
 export { CachePoison } from './cache-poison';
 export { Weaponize } from './weaponize';
 export { HttpClient } from './http-client';

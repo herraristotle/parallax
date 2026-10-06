@@ -196,6 +196,8 @@ export interface DiffSignal {
   newHeaders: string[];
   securityHeaderChanges: Record<string, { before: string; after: string }>;
   bodyContext?: 'script_tag' | 'attribute_url' | 'link_tag' | 'meta_tag' | 'image_tag' | 'form_tag' | 'inline_style' | 'generic';
+  /** CSPT sink hit (B-26): reflected path sits in a client-side URL sink. */
+  csptSink?: { sink: string; evidence: string };
 }
 
 export interface PathFuzzResult {
