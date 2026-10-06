@@ -96,7 +96,7 @@ describe('CacheDeception', () => {
     ]);
     expect(findings.some(f => f.confirmed)).toBe(true);
     // Confirmed on first endpoint → sweep stops (bounded call count).
-    expect(calls).toBeLessThan(20);
+    expect(calls).toBeLessThan(26);
   });
 
   it('treats Age > 0 as cache-hit evidence', async () => {

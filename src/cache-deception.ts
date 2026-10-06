@@ -35,6 +35,16 @@ const DECEPTIVE_PATTERNS = [
   '{path}/x.js',
   '{path}.png',
   '{path}%00.css',
+  // Berto CLOSER'24 §4.2: webmail attack vectors
+  '{path}.woff2',
+  '{path}/logo.svg',
+  '{path}.ico',
+  // Kettle web-cache-entanglement: RPO (Relative Path Overwrite)
+  '{path}/..%2f..%2fattacker.css',
+  '{path}/%2e%2e/static/evil.css',
+  // Mirheidari sec22 DE: path parameter confusion
+  '{path};.css',
+  '{path}%3b.css',
 ];
 
 const DYNAMIC_MARKERS = [
@@ -138,6 +148,7 @@ export class CacheDeception {
             originContentType: first.headers['content-type'],
             confirmed,
           });
+          if (confirmed) break;
         }
       } catch {
         // Pattern unsupported by edge — skip silently.

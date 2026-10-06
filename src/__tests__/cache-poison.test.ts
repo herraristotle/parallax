@@ -146,4 +146,15 @@ describe('CachePoison', () => {
     expect(all.filter(h => h === 'x-forwarded-host').length).toBe(1);
     expect(all.some(h => h.startsWith('x-custom-'))).toBe(false);
   });
+
+  it('should include HCache internal-route and auth-header CP-DoS classes', () => {
+    const classes = new Set(CachePoison.CPDOS_PAYLOADS.map(p => p.class));
+    expect(classes.has('internal_route')).toBe(true);
+    expect(classes.has('auth_header')).toBe(true);
+    const route = CachePoison.CPDOS_PAYLOADS.filter(p => p.class === 'internal_route');
+    expect(route.length).toBeGreaterThanOrEqual(5);
+    expect(route.some(p => p.name === 'fastly-client-ip')).toBe(true);
+    const auth = CachePoison.CPDOS_PAYLOADS.filter(p => p.class === 'auth_header');
+    expect(auth.length).toBeGreaterThanOrEqual(3);
+  });
 });
