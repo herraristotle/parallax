@@ -177,3 +177,44 @@ describe('framework-aware delimiter priority (B-12)', () => {
     expect(FRAMEWORK_DELIMITERS['spring']).toEqual([0x3b, 0x2e, 0x2f]);
   });
 });
+
+describe('batched fuzzing (B-22)', () => {
+  it('fetches baseline once per URL, not per probe', async () => {
+    let baselineGets = 0;
+    const client = {
+      get: async (url: string): Promise<HttpResponse> => {
+        if (url === 'https://example.com/page') baselineGets++;
+        return { status: 200, headers: {}, body: 'ok', bodyHash: '', timingMs: 1, fromCache: false };
+      },
+    } as unknown as HttpClient;
+    const diff = new CacheDiff(
+      { target: 'https://example.com/page' },
+      { byteRange: [0x41, 0x43], encodings: ['single'], positions: ['suffix'] },
+      client,
+    );
+    await diff.run([{ url: 'https://example.com/page' }]);
+    expect(baselineGets).toBe(1);
+  });
+
+  it('preserves probe order across concurrent batches', async () => {
+    const client = {
+      get: async (url: string): Promise<HttpResponse> => ({
+        // fuzzed URLs 404 → every probe records, order observable
+        status: url === 'https://example.com/page' ? 200 : 404,
+        headers: {},
+        body: url === 'https://example.com/page' ? 'ok' : 'missing',
+        bodyHash: '',
+        timingMs: 1,
+        fromCache: false,
+      }),
+    } as unknown as HttpClient;
+    const diff = new CacheDiff(
+      { target: 'https://example.com/page' },
+      { byteRange: [0x40, 0x4f], encodings: ['single'], positions: ['suffix'] }, // 16 bytes = 2 batches
+      client,
+    );
+    await diff.run([{ url: 'https://example.com/page' }]);
+    const bytes = diff.getResults().map(r => r.byte);
+    expect(bytes).toEqual(Array.from({ length: 16 }, (_, i) => 0x40 + i));
+  });
+});

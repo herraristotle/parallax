@@ -116,40 +116,57 @@ export class CacheDiff {
   private async fuzzUrl(baseUrl: string): Promise<void> {
     const parsed = new URL(baseUrl);
     const path = parsed.pathname;
+    // One baseline per URL instead of re-fetching it for every probe
+    // (halves request count; bodies are stable over a fuzz run).
+    const baseline = await this.http.get(baseUrl);
+    const order = frameworkByteOrder(this.framework, this.byteRange);
 
-    for (const byte of frameworkByteOrder(this.framework, this.byteRange)) {
-      for (const position of this.positions) {
-        for (const encoding of this.encodings) {
-          const fuzzedUrl = this.injectByte(baseUrl, path, byte, position, encoding);
-          try {
-            const [originalResp, fuzzedResp] = await Promise.all([
-              this.http.get(baseUrl),
-              this.http.get(fuzzedUrl),
-            ]);
+    // Batch bytes concurrently; Promise.all preserves input order so
+    // results stay in probe order (framework priority included).
+    const BATCH = 8;
+    for (let i = 0; i < order.length; i += BATCH) {
+      const batch = order.slice(i, i + BATCH);
+      const batchResults = await Promise.all(
+        batch.map(byte => this.fuzzByte(baseUrl, path, byte, baseline)),
+      );
+      for (const results of batchResults) this.results.push(...results);
+    }
+  }
 
-            const signals = this.compareResponses(
-              originalResp.body, fuzzedResp.body,
-              originalResp.headers, fuzzedResp.headers,
-              originalResp.status, fuzzedResp.status
-            );
+  private async fuzzByte(
+    baseUrl: string, path: string, byte: number,
+    baseline: { body: string; headers: Record<string, string>; status: number; fromCache: boolean },
+  ): Promise<PathFuzzResult[]> {
+    const found: PathFuzzResult[] = [];
+    for (const position of this.positions) {
+      for (const encoding of this.encodings) {
+        const fuzzedUrl = this.injectByte(baseUrl, path, byte, position, encoding);
+        try {
+          const fuzzedResp = await this.http.get(fuzzedUrl);
 
-            if (this.hasSignal(signals)) {
-              this.results.push({
-                originalUrl: baseUrl,
-                fuzzedUrl,
-                byte,
-                position,
-                encoding,
-                signals,
-                cacheHit: fuzzedResp.fromCache,
-              });
-            }
-          } catch {
-            // Skip failed requests
+          const signals = this.compareResponses(
+            baseline.body, fuzzedResp.body,
+            baseline.headers, fuzzedResp.headers,
+            baseline.status, fuzzedResp.status
+          );
+
+          if (this.hasSignal(signals)) {
+            found.push({
+              originalUrl: baseUrl,
+              fuzzedUrl,
+              byte,
+              position,
+              encoding,
+              signals,
+              cacheHit: fuzzedResp.fromCache,
+            });
           }
+        } catch {
+          // Skip failed requests
         }
       }
     }
+    return found;
   }
 
   injectByte(

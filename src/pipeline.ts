@@ -31,7 +31,11 @@ export class ParallaxPipeline {
 
   constructor(config: PipelineConfig) {
     this.config = config;
-    this.httpClient = new HttpClient({ timeoutMs: 10000, rateLimitPerSec: 10 });
+    this.httpClient = new HttpClient({
+      timeoutMs: 10000,
+      rateLimitPerSec: config.rateLimitPerSec ?? 10,
+      http2: config.http2 === true,
+    });
     this.probe = new CacheProbe({ target: config.target, cookie: config.cookie, headers: config.headers }, this.httpClient);
     this.harvest = new HeaderHarvest();
     this.diff = new CacheDiff({ target: config.target, cookie: config.cookie, headers: config.headers }, undefined, this.httpClient);
@@ -198,6 +202,7 @@ export class ParallaxPipeline {
       target: this.config.target,
       cookie: this.config.cookie,
       headers: this.config.headers,
+      wordlist: this.config.wordlistTier === 'all' ? 'all' : 'fast',
     }, this.httpClient);
     return discover.run(probeResult);
   }

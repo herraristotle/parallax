@@ -28,6 +28,7 @@ Options:
   --no-poison               Disable header poisoning scan
   --no-deception            Disable web cache deception probing
   --no-weaponize            Disable exploit chain generation
+  --http2                   Route GETs over HTTP/2 (falls back to HTTP/1.1)
 `;
 
 async function main(): Promise<void> {
@@ -51,6 +52,7 @@ async function main(): Promise<void> {
   config.target = target;
 
   // Parse CLI options
+  let reportFormat: ReportFormat | undefined;
   for (let i = 2; i < args.length; i++) {
     switch (args[i]) {
       case '--profile':
@@ -73,6 +75,15 @@ async function main(): Promise<void> {
       case '--wordlist':
         config.wordlistTier = args[++i] as 'fast' | 'all';
         break;
+      case '--format': {
+        const f = args[++i];
+        if (f === 'json' || f === 'markdown' || f === 'html') {
+          reportFormat = f;
+        } else {
+          console.warn(`Warning: Unknown format "${f}" (json|markdown|html); using default`);
+        }
+        break;
+      }
       case '--output':
         config.outputDir = args[++i];
         break;
@@ -94,6 +105,9 @@ async function main(): Promise<void> {
       case '--no-weaponize':
         config.enableWeaponize = false;
         break;
+      case '--http2':
+        config.http2 = true;
+        break;
     }
   }
 
@@ -111,11 +125,11 @@ async function main(): Promise<void> {
     const result = await pipeline.run();
 
     const exporter = new ReportExporter(config.outputDir);
-    const reportPath = exporter.export(result, 'json');
+    const reportPath = exporter.export(result, reportFormat ?? 'json');
     logger.info(`Report saved to ${reportPath}`);
 
-    const mdPath = exporter.export(result, 'markdown');
-    logger.info(`Markdown report saved to ${mdPath}`);
+    const mdPath = reportFormat ? '' : exporter.export(result, 'markdown');
+    if (mdPath) logger.info(`Markdown report saved to ${mdPath}`);
 
     // Summary
     const totalFindings = result.poison.reduce((sum, p) => sum + p.findings.length, 0);
@@ -126,7 +140,7 @@ async function main(): Promise<void> {
     console.log(`Cached URLs: ${result.discover.cachedUrls.length}`);
     console.log(`Findings: ${totalFindings}`);
     console.log(`Exploit Chains: ${totalChains}`);
-    console.log(`Reports: ${reportPath}, ${mdPath}`);
+    console.log(`Reports: ${[reportPath, mdPath].filter(Boolean).join(', ')}`);
   } else if (command === 'batch') {
     // Batch command: read targets from file
     const fs = await import('fs');
@@ -160,8 +174,8 @@ async function main(): Promise<void> {
         const result = await pipeline.run();
         allResults.push(result);
         
-        const reportPath = exporter.export(result, 'json');
-        const mdPath = exporter.export(result, 'markdown');
+        const reportPath = exporter.export(result, reportFormat ?? 'json');
+        const mdPath = reportFormat ? '' : exporter.export(result, 'markdown');
         
         const totalFindings = result.poison.reduce((sum: number, p: any) => sum + p.findings.length, 0);
         const totalChains = result.weaponize.reduce((sum: number, w: any) => sum + w.chains.length, 0);
@@ -169,7 +183,7 @@ async function main(): Promise<void> {
         console.log(`  Cached URLs: ${result.discover.cachedUrls.length}`);
         console.log(`  Findings: ${totalFindings}`);
         console.log(`  Exploit Chains: ${totalChains}`);
-        console.log(`  Reports: ${reportPath}, ${mdPath}`);
+        console.log(`  Reports: ${[reportPath, mdPath].filter(Boolean).join(', ')}`);
       } catch (err) {
         console.error(`  Error scanning ${url}:`, err);
         allResults.push({ target: url, error: String(err) } as any);

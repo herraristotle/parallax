@@ -57,6 +57,10 @@ export interface PipelineConfig {
   cookie?: string;
   headers?: Record<string, string>;
   wordlistTier?: 'fast' | 'all';
+  /** Shared HttpClient start-rate; default 10 req/s. Raise to cut wall-clock per URL. */
+  rateLimitPerSec?: number;
+  /** Route GETs over HTTP/2 sessions (falls back to HTTP/1.1 per origin). */
+  http2?: boolean;
   enableTiming?: boolean;
   enableDiff?: boolean;
   enablePoison?: boolean;
