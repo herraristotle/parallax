@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CacheDeception } from '../cache-deception';
+import { CacheDeception, pageIdenticality } from '../cache-deception';
 import type { HttpClient, HttpResponse } from '../http-client';
 
 function stubClient(handler: (url: string, n: number) => HttpResponse): HttpClient {
@@ -113,5 +113,74 @@ describe('CacheDeception', () => {
     const deception = new CacheDeception({ target: 'https://example.com/profile' }, client);
     const findings = await deception.testEndpoint('https://example.com/profile');
     expect(findings.some(f => f.confirmed && f.cacheEvidence['age'] === '42')).toBe(true);
+  });
+
+  it('pageIdenticality ignores volatile tokens but catches real content drift', () => {
+    const a = '<form csrf="a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4" >Welcome user@example.com</form>';
+    const b = '<form csrf="ffffffffffffffffffffffffffffffff" >Welcome user@example.com</form>';
+    const c = '<form >Welcome admin@example.com Premium account</form>';
+    expect(pageIdenticality(a, b)).toBeGreaterThanOrEqual(0.95);
+    expect(pageIdenticality(a, c)).toBeLessThan(0.95);
+  });
+
+  it('flags cross-user leak when unauthenticated fetch returns the authed body', async () => {
+    let calls = 0;
+    const client = stubClient((url, ) => {
+      calls++;
+      if (calls === 1) return resp({ body: DYNAMIC_BODY, headers: { 'set-cookie': 'sid=1' } });
+      // Every subsequent call (auth pair + unauth probe) returns authed body + HIT
+      return resp({ body: DYNAMIC_BODY, headers: { 'cf-cache-status': 'HIT', 'content-type': 'text/html' } });
+    });
+    const deception = new CacheDeception(
+      { target: 'https://example.com/account', headers: { cookie: 'sid=secret' } },
+      client,
+    );
+    const findings = await deception.testEndpoint('https://example.com/account');
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings[0].crossUserLeak).toBe(true);
+    expect(findings[0].identicalityScore).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it('does not run unauth probe when no credentials configured', async () => {
+    let calls = 0;
+    const client = stubClient(() => {
+      calls++;
+      if (calls === 1) return resp({ body: DYNAMIC_BODY, headers: { 'set-cookie': 'sid=1' } });
+      const isSecondOfPair = (calls - 1) % 2 === 0;
+      return resp({
+        body: DYNAMIC_BODY,
+        headers: isSecondOfPair ? { 'x-cache': 'HIT' } : { 'x-cache': 'MISS' },
+      });
+    });
+    const deception = new CacheDeception({ target: 'https://example.com/account' }, client);
+    const findings = await deception.testEndpoint('https://example.com/account');
+    expect(findings.some(f => f.confirmed)).toBe(true);
+    // baseline + one pattern's two requests only — no third unauth probe
+    expect(calls).toBeLessThanOrEqual(3);
+    expect(findings[0].identicalityScore).toBeUndefined();
+  });
+
+  it('flags webmail vector when session cookie is SameSite=None; Secure', async () => {
+    let calls = 0;
+    const client = stubClient(() => {
+      calls++;
+      if (calls === 1) {
+        return resp({
+          body: DYNAMIC_BODY,
+          headers: { 'set-cookie': 'sid=1; SameSite=None; Secure' },
+        });
+      }
+      const isSecondOfPair = (calls - 1) % 2 === 0;
+      return resp({
+        body: DYNAMIC_BODY,
+        headers: isSecondOfPair ? { 'x-cache': 'HIT' } : { 'x-cache': 'MISS' },
+      });
+    });
+    const deception = new CacheDeception(
+      { target: 'https://mail.example.com/inbox', headers: { cookie: 'sid=1' } },
+      client,
+    );
+    const findings = await deception.testEndpoint('https://mail.example.com/inbox');
+    expect(findings.some(f => f.confirmed && f.webmailVector)).toBe(true);
   });
 });

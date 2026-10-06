@@ -106,6 +106,12 @@ export interface DeceptionFinding {
   /** Content-type the origin returned for the deceptive URL. */
   originContentType?: string;
   confirmed: boolean;
+  /** Marker-free identicality score (0-1) between authed and unauthed bodies (sec22 §3.1). */
+  identicalityScore?: number;
+  /** Unauthenticated fetch returned the authenticated body — cross-user leak. */
+  crossUserLeak?: boolean;
+  /** Session cookie is SameSite=None; Secure — enables Berto webmail WCD vector. */
+  webmailVector?: boolean;
 }
 
 export interface ProbeResult {

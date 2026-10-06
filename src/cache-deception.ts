@@ -87,6 +87,33 @@ function looksLikeCacheHit(headers: Record<string, string>): boolean {
   return false;
 }
 
+/** Strip per-response volatile tokens so identicality compares page structure. */
+function normalizeBody(body: string): string {
+  return body
+    .replace(/cf_obf_email\s*=\s*"[^"]*"/gi, 'cf_obf_email=""')       // CF email obfuscation (sec22 §4.2)
+    .replace(/name="_csrf[^"]*"\s+value="[^"]*"/gi, 'name="_csrf" value=""')
+    .replace(/authenticity_token"[^>]*value="[^"]*"/gi, 'authenticity_token" value=""')
+    .replace(/\b[0-9a-f]{32,}\b/gi, 'HASH')                            // nonces / session hashes
+    .replace(/\d{10,}/g, 'TS');                                        // timestamps
+}
+
+/** Marker-free page identicality (Mirheidari sec22 §3.1): Jaccard on word tokens. */
+export function pageIdenticality(a: string, b: string): number {
+  const tokenize = (s: string) => new Set(normalizeBody(s).toLowerCase().split(/\s+/).filter(Boolean));
+  const ta = tokenize(a);
+  const tb = tokenize(b);
+  if (ta.size === 0 && tb.size === 0) return 1;
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter++;
+  return inter / (ta.size + tb.size - inter);
+}
+
+/** Berto CLOSER'24 §5: SameSite=None; Secure session cookie enables webmail WCD vector. */
+function enablesWebmailVector(headers: Record<string, string>): boolean {
+  const cookie = headers['set-cookie'] || '';
+  return /samesite\s*=\s*none/i.test(cookie) && /secure/i.test(cookie);
+}
+
 export class CacheDeception {
   private config: DeceptionConfig;
   private http: HttpClient;
@@ -138,7 +165,7 @@ export class CacheDeception {
         const confirmed = originServed && looksLikeCacheHit(second.headers);
 
         if (confirmed || (originServed && Object.keys(evidence).length > 0 && looksLikeCacheHit(second.headers))) {
-          findings.push({
+          const finding: DeceptionFinding = {
             endpoint: endpointUrl,
             attackUrl: attackUrl.toString(),
             pattern: pattern,
@@ -147,7 +174,31 @@ export class CacheDeception {
             cacheEvidence: evidence,
             originContentType: first.headers['content-type'],
             confirmed,
-          });
+          };
+
+          // sec22 §3.1 marker-free identicality: re-fetch deceptive URL with
+          // credentials stripped. If the cache still serves the authenticated
+          // body, any user gets the victim's content (cross-user leak).
+          const unauthHeaders = { ...headers };
+          delete unauthHeaders['cookie'];
+          delete unauthHeaders['authorization'];
+          const hadCreds = 'cookie' in headers || 'authorization' in headers;
+          if (hadCreds) {
+            try {
+              const unauth = await this.http.get(attackUrl.toString(), unauthHeaders);
+              const score = pageIdenticality(first.body, unauth.body);
+              finding.identicalityScore = score;
+              finding.crossUserLeak =
+                score >= 0.95 && unauth.body.length > 0 &&
+                (looksLikeCacheHit(unauth.headers) || unauth.body === first.body);
+            } catch {
+              // Unauth probe failed — identicality stays undefined.
+            }
+          }
+
+          if (enablesWebmailVector(baseline.headers)) finding.webmailVector = true;
+
+          findings.push(finding);
           if (confirmed) break;
         }
       } catch {
