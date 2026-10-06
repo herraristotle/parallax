@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CacheProbe } from '../cache-probe';
+import type { HttpClient, HttpResponse } from '../http-client';
 
 describe('CacheProbe', () => {
   it('should detect Cloudflare from cf-cache-status header', () => {
@@ -63,5 +64,49 @@ describe('CacheProbe', () => {
     const result = probe.detectCDN({ 'cf-cache-status': 'HIT', 'cf-ray': 'abc123', 'server': 'cloudflare' });
     expect(result.name).toBe('cloudflare');
     expect(result.confidence).toBeGreaterThan(0.9);
+  });
+});
+
+describe('cache-key header dim (B-11)', () => {
+  function stub(handler: (headers: Record<string, string>, url: string) => string): HttpClient {
+    return {
+      get: async (url: string, headers: Record<string, string> = {}) => ({
+        status: 200,
+        headers: {},
+        body: handler(headers, url),
+        bodyHash: 'x',
+        timingMs: 1,
+        fromCache: false,
+      } satisfies HttpResponse),
+    } as unknown as HttpClient;
+  }
+
+  it('records a header whose variants each see their own canary (keyed)', async () => {
+    const probe = new CacheProbe({ target: 'https://example.com/page' });
+    const http = stub((headers) => headers['x-forwarded-host'] || 'static');
+    const key = await probe.reverseCacheKey(http);
+    expect(key.headersKeyed).toContain('x-forwarded-host');
+    // headers that never reflect stay out (inconclusive, not falsely keyed)
+    expect(key.headersKeyed).not.toContain('accept-language');
+  });
+
+  it('leaves header out when the second variant serves the first canary (unkeyed)', async () => {
+    const probe = new CacheProbe({ target: 'https://example.com/page' });
+    // shared cache entry: first body for a given cache-buster wins
+    const entries = new Map<string, string>();
+    const http = stub((headers, url) => {
+      const key = url;
+      if (!entries.has(key)) entries.set(key, headers['x-forwarded-host'] || 'static');
+      return entries.get(key)!;
+    });
+    const key = await probe.reverseCacheKey(http);
+    expect(key.headersKeyed).toEqual([]);
+  });
+
+  it('skips headers the origin does not reflect', async () => {
+    const probe = new CacheProbe({ target: 'https://example.com/page' });
+    const http = stub(() => 'static body');
+    const key = await probe.reverseCacheKey(http);
+    expect(key.headersKeyed).toEqual([]);
   });
 });

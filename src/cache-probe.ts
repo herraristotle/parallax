@@ -232,7 +232,7 @@ export class CacheProbe {
    */
   async reverseCacheKey(http?: HttpClient): Promise<CacheKeySpec> {
     const client = http || new HttpClient({ timeoutMs: 10000, rateLimitPerSec: 5 });
-    
+
     const results: CacheKeySpec = {
       scheme: true,
       host: true,
@@ -254,8 +254,51 @@ export class CacheProbe {
     results.querySorted = await this.testCacheComponent(client, 'query-sort');
     results.port = await this.testCacheComponent(client, 'port');
     results.fragmentStripped = await this.testCacheComponent(client, 'fragment');
+    results.headersKeyed = await this.detectKeyedHeaders(client);
 
     return results;
+  }
+
+  /** Classic web-cache key-reversal suspects (URL-overrides + variant headers). */
+  private static readonly KEY_HEADER_CANDIDATES = [
+    'x-forwarded-host', 'x-original-url', 'x-rewrite-url', 'x-host',
+    'forwarded', 'x-http-method-override', 'referer', 'accept-language',
+    'x-requested-with',
+  ];
+
+  /**
+   * Header dim of cache-key reversal (6th dim). Same cache-buster, two
+   * header values: if the origin reflects them and the second request still
+   * serves the first canary, the entry was shared → header unkeyed; if each
+   * variant sees its own canary → header is part of the key. Non-reflected
+   * headers are inconclusive and left out.
+   */
+  private async detectKeyedHeaders(http: HttpClient): Promise<string[]> {
+    const keyed: string[] = [];
+    for (const header of CacheProbe.KEY_HEADER_CANDIDATES) {
+      try {
+        const cb = Math.random().toString(36).substring(2, 10);
+        const url = new URL(this.config.target);
+        url.searchParams.set('_pc_test', cb);
+        url.searchParams.set('_pc_component', `header-${header}`);
+
+        const value1 = `pc${cb}a.example`;
+        const value2 = `pc${cb}b.example`;
+        const base = this.config.headers || {};
+
+        const r1 = await http.get(url.toString(), { ...base, [header]: value1 });
+        if (!r1.body.includes(value1)) continue; // not reflected → inconclusive
+
+        const r2 = await http.get(url.toString(), { ...base, [header]: value2 });
+        if (r2.body.includes(value2) && !r2.body.includes(value1)) {
+          keyed.push(header);
+        }
+        // r2 still serves value1 → shared entry → unkeyed (not pushed)
+      } catch {
+        // Skip failed probes
+      }
+    }
+    return keyed;
   }
 
   private async testCacheComponent(http: HttpClient, component: string): Promise<boolean> {
