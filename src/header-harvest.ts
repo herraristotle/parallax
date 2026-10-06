@@ -1,6 +1,7 @@
 import { HeaderHarvestConfig, HeaderWordlist } from './types';
 import * as fs from 'fs';
 import * as path from 'path';
+import { DEFAULT_HEADER_SQL, FetchLike, loadServiceAccount, mintAccessToken, runQuery } from './bigquery';
 
 /**
  * HeaderHarvest — BigQuery HTTP Archive queries for uncommon headers + Vary analysis
@@ -8,11 +9,19 @@ import * as path from 'path';
  * From Parallax blog: "The wordlist_builder merges BigQuery results with 145 CDN-internal
  * headers and 39 IANA-registered headers. Deduplication, filtering, and frequency-based
  * prioritisation produce two output wordlists."
+ *
+ * B-13: when bigQueryProject (+ service-account creds) is configured, uncommon
+ * headers come from a live HTTP Archive query and are merged ahead of the
+ * file-based HCache fallback; any GCP failure degrades to the file list.
  */
 export class HeaderHarvest {
   private config: HeaderHarvestConfig;
   private headersFile: string;
   private parametersFile: string;
+  /** Injectable for tests; defaults to global fetch. */
+  fetchImpl?: FetchLike;
+  /** Single-flight cache: buildWordlists harvests uncommon + vary paths. */
+  private bqResult?: Promise<string[] | undefined>;
 
   constructor(config: HeaderHarvestConfig = {}) {
     this.config = {
@@ -24,8 +33,42 @@ export class HeaderHarvest {
     this.parametersFile = config.parametersFile || path.join(__dirname, '..', '..', '..', '..', 'cache', 'HCache', 'parameters.txt');
   }
 
+  /** Live HTTP Archive harvest; undefined when unconfigured or on any failure. */
+  harvestFromBigQuery(): Promise<string[] | undefined> {
+    this.bqResult ??= this.queryBigQuery();
+    return this.bqResult;
+  }
+
+  private async queryBigQuery(): Promise<string[] | undefined> {
+    if (!this.config.bigQueryProject) return undefined;
+    try {
+      const credPath =
+        this.config.bigQueryCredentialsPath || process.env.GOOGLE_APPLICATION_CREDENTIALS || '';
+      if (!credPath) return undefined;
+      const sa = loadServiceAccount(credPath);
+      const token = await mintAccessToken(sa, Date.now(), this.fetchImpl);
+      const rows = await runQuery(this.config.bigQuerySql || DEFAULT_HEADER_SQL, {
+        project: this.config.bigQueryProject,
+        accessToken: token,
+        fetchImpl: this.fetchImpl,
+      });
+      const headers = rows
+        .map((row) => String(row[0] ?? '').trim().toLowerCase())
+        .filter((h) => h.length > 0 && h.length <= 128);
+      return Array.from(new Set(headers));
+    } catch {
+      return undefined; // GCP unavailable → caller falls back to file harvest
+    }
+  }
+
   async harvestUncommonHeaders(): Promise<string[]> {
-    return this.loadFromFile(this.headersFile);
+    const bigQuery = await this.harvestFromBigQuery();
+    const fileHeaders = await this.loadFromFile(this.headersFile);
+    if (!bigQuery || bigQuery.length === 0) return fileHeaders;
+    // BQ frequency-ordered list first; curated HCache entries fill the tail.
+    const seen = new Set(bigQuery.map((h) => h.toLowerCase()));
+    const extras = fileHeaders.filter((h) => !seen.has(h.toLowerCase()));
+    return [...bigQuery, ...extras];
   }
 
   async harvestVaryHeaders(): Promise<string[]> {

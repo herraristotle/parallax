@@ -37,7 +37,11 @@ export class ParallaxPipeline {
       http2: config.http2 === true,
     });
     this.probe = new CacheProbe({ target: config.target, cookie: config.cookie, headers: config.headers }, this.httpClient);
-    this.harvest = new HeaderHarvest();
+    this.harvest = new HeaderHarvest({
+      bigQueryProject: config.bigQueryProject,
+      bigQueryCredentialsPath: config.bigQueryCredentialsPath,
+      bigQuerySql: config.bigQuerySql,
+    });
     this.diff = new CacheDiff({ target: config.target, cookie: config.cookie, headers: config.headers }, undefined, this.httpClient);
     this.poison = new CachePoison({ 
       target: config.target, 

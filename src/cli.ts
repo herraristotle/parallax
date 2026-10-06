@@ -29,6 +29,8 @@ Options:
   --no-deception            Disable web cache deception probing
   --no-weaponize            Disable exploit chain generation
   --http2                   Route GETs over HTTP/2 (falls back to HTTP/1.1)
+  --bigquery-project <id>   GCP project for Stage-2 BigQuery header harvest
+                            (creds via GOOGLE_APPLICATION_CREDENTIALS)
 `;
 
 async function main(): Promise<void> {
@@ -107,6 +109,9 @@ async function main(): Promise<void> {
         break;
       case '--http2':
         config.http2 = true;
+        break;
+      case '--bigquery-project':
+        config.bigQueryProject = args[++i];
         break;
     }
   }

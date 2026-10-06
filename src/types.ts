@@ -61,6 +61,12 @@ export interface PipelineConfig {
   rateLimitPerSec?: number;
   /** Route GETs over HTTP/2 sessions (falls back to HTTP/1.1 per origin). */
   http2?: boolean;
+  /** Stage-2 BigQuery HTTP Archive harvest (B-13): billing project id. */
+  bigQueryProject?: string;
+  /** Service-account JSON path (defaults to GOOGLE_APPLICATION_CREDENTIALS). */
+  bigQueryCredentialsPath?: string;
+  /** Override the default header-frequency SQL. */
+  bigQuerySql?: string;
   enableTiming?: boolean;
   enableDiff?: boolean;
   enablePoison?: boolean;
@@ -151,7 +157,12 @@ export interface HeaderSource {
 }
 
 export interface HeaderHarvestConfig {
+  /** GCP project that bills the HTTP Archive query; enables the BigQuery path. */
   bigQueryProject?: string;
+  /** Service-account JSON path (defaults to GOOGLE_APPLICATION_CREDENTIALS). */
+  bigQueryCredentialsPath?: string;
+  /** Override the default httparchive.all.requests header-frequency SQL. */
+  bigQuerySql?: string;
   lowThreshold?: number;
   highThreshold?: number;
   varyExclusions?: string[];
