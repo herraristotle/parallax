@@ -98,4 +98,40 @@ describe('ReportExporter', () => {
     expect(md).toContain('Poison Findings');
     expect(md).toContain('Host Header Injection');
   });
+
+  it('summary counts items, not buckets (B-23 metrics fix)', () => {
+    const finding = (n: number) => ({
+      inputType: 'header',
+      inputName: `x-test-${n}`,
+      canary: `canary${n}`,
+      classification: 'xss',
+      confidence: 'CONFIRMED',
+      attackClass: 'content_poison',
+      blastRadius: { scope: 'global', deviceTypes: ['desktop'] },
+    });
+    const result: PipelineResult = {
+      ...SAMPLE_RESULT,
+      diff: [{
+        url: 'https://example.com/',
+        fuzzResults: [{}, {}, {}, {}],
+        unkeyedDelimiters: [],
+      }] as any,
+      poison: [{
+        findings: [finding(1), finding(2), finding(3)] as any,
+        statistics: { headersTested: 3, headersReflected: 0, headersUnkeyed: 0, classifications: {} },
+      }],
+      weaponize: [{
+        chains: [
+          { finding: finding(1), impact: { severity: 'high', cvss: 8, description: 'd' }, poc: { steps: ['s'], curlCommand: 'curl' }, prerequisites: [] },
+          { finding: finding(2), impact: { severity: 'low', cvss: 3, description: 'd' }, poc: { steps: ['s'], curlCommand: 'curl' }, prerequisites: [] },
+        ] as any,
+        summary: { total: 2, bySeverity: {}, byClass: {} },
+      }],
+    };
+    const exporter = new ReportExporter(outputDir);
+    const md = exporter.toMarkdown(result);
+    expect(md).toContain('| Diff Results | 4 |');
+    expect(md).toContain('| Poison Findings | 3 |');
+    expect(md).toContain('| Exploit Chains | 2 |');
+  });
 });

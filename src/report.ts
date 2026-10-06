@@ -60,9 +60,9 @@ export class ReportExporter {
       `| Framework Detected | ${result.probe.framework.name} |`,
       `| Hidden Cache Detected | ${result.probe.hiddenCacheDetected ? 'Yes' : 'No'} |`,
       `| Cached URLs Found | ${result.discover.cachedUrls.length} |`,
-      `| Diff Results | ${result.diff.length} |`,
-      `| Poison Findings | ${result.poison.length} |`,
-      `| Exploit Chains | ${result.weaponize.length} |`,
+      `| Diff Results | ${result.diff.reduce((n, d) => n + d.fuzzResults.length, 0)} |`,
+      `| Poison Findings | ${result.poison.reduce((n, p) => n + p.findings.length, 0)} |`,
+      `| Exploit Chains | ${result.weaponize.reduce((n, w) => n + w.chains.length, 0)} |`,
       '',
     ];
 
