@@ -618,6 +618,9 @@ async testSingleHeader(header: string, baseline: HttpResponse): Promise<PoisonFi
 
     // 9. Parameter cloaking (Kettle)
     await this.testParameterCloaking(url, baseHeaders);
+
+    // 10. Fat GET (Kettle web-cache-entanglement)
+    await this.testFatGET(url, baseHeaders);
   }
 
   private async testFragmentForwarding(url: string, headers: Record<string, string>): Promise<void> {
@@ -778,6 +781,30 @@ async testSingleHeader(header: string, baseline: HttpResponse): Promise<PoisonFi
         blastRadius: { scope: 'global', deviceTypes: ['desktop'] },
       });
     }
+  }
+
+  /**
+   * Fat GET: send a GET with a POST body. Kettle "web-cache-entanglement" §Unkeyed Method.
+   * Caches key on GET+path; if backend processes the body (x-http-method-override or
+   * fat-GET support), response content changes while cache key stays the same.
+   */
+  private async testFatGET(url: string, headers: Record<string, string>): Promise<void> {
+    const canary = this.generateCanary();
+    try {
+      const resp = await this.http.request('GET', url, {
+        ...headers,
+        'content-type': 'application/x-www-form-urlencoded',
+        'x-http-method-override': 'POST',
+      }, `x=${canary}`);
+      if (resp.status === 200 && resp.body.includes(canary)) {
+        this.findings.push({
+          inputType: 'body', inputName: 'fat-GET', canary,
+          signals: { bodyReflection: true, headerReflection: {}, statusChanged: false, sizeDeltaPercent: 0, newHeaders: [], securityHeaderChanges: {} },
+          oracle: {} as any, classification: 'behaviour_poisoning', attackClass: 'content_poison', confidence: 'LIKELY',
+          blastRadius: { scope: 'global', deviceTypes: ['desktop'] },
+        });
+      }
+    } catch { /* fat-GET not supported — skip */ }
   }
 
   private generateCanary(): string {

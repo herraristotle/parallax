@@ -182,6 +182,7 @@ export class HttpClient {
     method: string,
     url: string,
     headers?: Record<string, string>,
+    body?: string,
   ): Promise<HttpResponse> {
     const mergedHeaders: Record<string, string> = {
       'user-agent': this.config.userAgent,
@@ -212,11 +213,12 @@ export class HttpClient {
         const res = await fetch(url, {
           method,
           headers: mergedHeaders,
+          body: body ?? null,
           signal: controller.signal,
         });
         clearTimeout(timeoutId);
 
-        const body = method === 'HEAD' ? '' : await res.text();
+        const responseBody = method === 'HEAD' ? '' : await res.text();
         const elapsed = Date.now() - start;
         this.requestCount++;
 
@@ -230,8 +232,8 @@ export class HttpClient {
         return {
           status: res.status,
           headers: resHeaders,
-          body,
-          bodyHash: this.hash(body),
+          body: responseBody,
+          bodyHash: this.hash(responseBody),
           timingMs: elapsed,
           fromCache,
         };
