@@ -5,6 +5,7 @@ export { CacheDiff, WCD_PAYLOADS, buildWCDUrls, FRAMEWORK_DELIMITERS, frameworkB
 export { CachePoison } from './cache-poison';
 export { Weaponize } from './weaponize';
 export { HttpClient } from './http-client';
+export { rawHeaderRequest } from './raw-http';
 export { CacheTiming } from './cache-timing';
 export { Discover } from './discover';
 export { CacheDeception } from './cache-deception';
@@ -16,6 +17,10 @@ export type {
   HttpConfig,
   HttpResponse,
 } from './http-client';
+
+export type {
+  RawHttpResponse,
+} from './raw-http';
 
 export type {
   CacheTimingConfig,

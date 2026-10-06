@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { CachePoisonConfig, PoisonFinding, PoisonResult, DiffSignal, CacheKeyOracle } from './types';
 import { HttpClient, HttpResponse } from './http-client';
+import { rawHeaderRequest } from './raw-http';
 
 /**
  * CP-DoS payload classes → canonical ExploitClassification.
@@ -454,16 +455,35 @@ async testSingleHeader(header: string, baseline: HttpResponse): Promise<PoisonFi
     const baseline = await this.http.get(url, this.config.headers || {});
 
     for (const payload of CachePoison.CPDOS_PAYLOADS) {
-      if (payload.class === 'illegal_header') continue; // Raw socket required
-
       try {
-        const headers: Record<string, string> = { ...(this.config.headers || {}) };
-        headers[payload.name] = payload.value;
-        const response = await this.http.get(url, headers);
+        let response: HttpResponse;
+        let confidence: PoisonFinding['confidence'] = 'CONFIRMED';
+
+        if (payload.class === 'illegal_header') {
+          // undici/h11 refuse these on the wire — send the crafted line
+          // verbatim over a raw socket instead.
+          const raw = await rawHeaderRequest(url, payload.value, this.config.headers || {});
+          if (raw.error && !raw.connected) continue; // never reached the server
+          if (raw.status === 0) {
+            // TCP accepted, then dropped mid-request → parser failure signal
+            confidence = 'LIKELY';
+            response = { status: 0, headers: {}, body: '', bodyHash: '', fromCache: false, timingMs: 0 };
+          } else {
+            response = { status: raw.status, headers: raw.headers, body: raw.body, bodyHash: '', fromCache: false, timingMs: 0 };
+          }
+        } else {
+          const headers: Record<string, string> = { ...(this.config.headers || {}) };
+          headers[payload.name] = payload.value;
+          response = await this.http.get(url, headers);
+        }
 
         let confirmed = false;
         if (payload.class === 'cpdos' && (response.status >= 400 || response.status === 304)) {
           confirmed = true;
+        } else if (payload.class === 'illegal_header') {
+          // 400-class rejection is a safe parser response; 5xx or a
+          // mid-connection drop means the malformed name broke a hop.
+          confirmed = response.status === 0 || response.status >= 500;
         } else if (payload.class === 'waf_poison' && CachePoison.WAF_STATUSES.has(response.status)) {
           // Verify it's actually cached by checking cache status header or timing
           confirmed = response.fromCache === true || response.timingMs < baseline.timingMs * 0.8;
@@ -502,7 +522,7 @@ async testSingleHeader(header: string, baseline: HttpResponse): Promise<PoisonFi
             oracle: {} as any,
             classification: canonicalClassification(payload.class) as PoisonFinding['classification'],
             attackClass: payload.class === 'cpdos' ? 'cpdos' : 'header_poison',
-            confidence: 'CONFIRMED',
+            confidence,
             blastRadius: { scope: 'global', deviceTypes: ['desktop'] },
           });
         }
