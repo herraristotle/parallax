@@ -84,6 +84,12 @@ export interface PipelineResult {
   deception?: DeceptionFinding[];
 }
 
+/** Batch-scan failure record — schema for `error` entries in batch summaries. */
+export interface PipelineErrorEntry {
+  target: string;
+  error: string;
+}
+
 export interface DeceptionFinding {
   /** Original dynamic endpoint the deceptive suffix was appended to. */
   endpoint: string;

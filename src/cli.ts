@@ -4,7 +4,7 @@ import { ParallaxPipeline } from './pipeline';
 import { ParallaxConfigLoader } from './config';
 import { Logger } from './logger';
 import { ReportExporter, ReportFormat } from './report';
-import { PipelineResult } from './types';
+import { PipelineResult, PipelineErrorEntry } from './types';
 
 const USAGE = `
 Parallax Cache Toolkit — Differential cache analysis for web cache poisoning
@@ -167,7 +167,7 @@ async function main(): Promise<void> {
     console.log(`[Parallax] Batch scanning ${urls.length} targets from ${filePath}`);
     
     const exporter = new ReportExporter(config.outputDir);
-    const allResults: PipelineResult[] = [];
+    const allResults: (PipelineResult | PipelineErrorEntry)[] = [];
     
     for (let i = 0; i < urls.length; i++) {
       const url = urls[i];
@@ -191,7 +191,7 @@ async function main(): Promise<void> {
         console.log(`  Reports: ${[reportPath, mdPath].filter(Boolean).join(', ')}`);
       } catch (err) {
         console.error(`  Error scanning ${url}:`, err);
-        allResults.push({ target: url, error: String(err) } as any);
+        allResults.push({ target: url, error: String(err) });
       }
     }
     
@@ -202,11 +202,15 @@ async function main(): Promise<void> {
     console.log(`Scanned: ${urls.length} targets`);
     console.log(`Summary: ${summaryPath}`);
     const totalFindings = allResults.reduce(
-      (sum, r) => sum + ((r.poison ?? []).reduce((s: number, p: any) => s + p.findings.length, 0) ?? 0),
+      (sum, r) => sum + ('poison' in r
+        ? r.poison.reduce((s, p) => s + p.findings.length, 0)
+        : 0),
       0
     );
     const totalChains = allResults.reduce(
-      (sum, r) => sum + ((r.weaponize ?? []).reduce((s: number, w: any) => s + w.chains.length, 0) ?? 0),
+      (sum, r) => sum + ('weaponize' in r
+        ? r.weaponize.reduce((s, w) => s + w.chains.length, 0)
+        : 0),
       0
     );
     console.log(`Targets scanned: ${urls.length}`);

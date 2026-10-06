@@ -41,6 +41,7 @@ export type {
   CacheDiffConfig,
   PipelineConfig,
   PipelineResult,
+  PipelineErrorEntry,
   ProbeResult,
   CDNSignature,
   ProxySignature,
