@@ -5,6 +5,8 @@ export interface DiscoverConfig {
   target: string;
   cookie?: string;
   headers?: Record<string, string>;
+  wordlist?: 'fast' | 'all';
+  crawl?: boolean;
 }
 
 export class Discover {
@@ -25,6 +27,30 @@ export class Discover {
     '/v1/users', '/v2/users', '/admin', '/debug',
   ];
 
+  /** fast = defaultPaths; all = fast + extended coverage (cms/api/backup/static). */
+  allPaths = [
+    ...this.defaultPaths,
+    '/wp-json/', '/wp-login.php', '/wp-admin/', '/xmlrpc.php',
+    '/cgi-bin/', '/server-status', '/server-info',
+    '/.env', '/.git/HEAD', '/.gitignore', '/.htaccess', '/web.config',
+    '/backup', '/backup.zip', '/db.sql', '/dump.sql',
+    '/phpinfo.php', '/info.php', '/test.php',
+    '/api', '/api/v1', '/api/v2', '/api/docs', '/api/swagger',
+    '/api/users', '/api/products', '/api/config', '/api/healthz', '/api/metrics',
+    '/health', '/healthz', '/ready', '/metrics', '/status.json',
+    '/console', '/actuator', '/actuator/health', '/actuator/env',
+    '/trace', '/jmx-console', '/manager/html',
+    '/search', '/cart', '/checkout', '/orders',
+    '/static/js/main.js', '/static/css/main.css', '/static/img/logo.png',
+    '/uploads/', '/files/', '/docs/', '/documentation/',
+    '/sitemap_index.xml', '/sitemap-1.xml', '/crossdomain.xml',
+    '/browser-sync/browser-sync-client.js',
+    '/__nextjs_original-stack-frame', '/_next/static/',
+    '/app.js', '/main.js', '/bundle.js', '/vendor.js',
+    '/error', '/404', '/500', '/maintenance',
+    '/version', '/build-info', '/release',
+  ];
+
   constructor(config: DiscoverConfig, httpClient?: HttpClient) {
     this.config = config;
     this.http = httpClient || new HttpClient({ timeoutMs: 10000, rateLimitPerSec: 10 });
@@ -33,8 +59,11 @@ export class Discover {
   async run(probeResult: ProbeResult): Promise<DiscoverResult> {
     const cachedUrls: CachedUrl[] = [];
     const uncacheableUrls: string[] = [];
+    const wordlist = this.config.wordlist === 'all' ? this.allPaths : this.defaultPaths;
+    const crawled = this.config.crawl === false ? [] : await this.crawl();
+    const paths = [...new Set([...crawled, ...wordlist])];
 
-    for (const path of this.defaultPaths) {
+    for (const path of paths) {
       const url = new URL(this.config.target);
       url.pathname = path;
 
@@ -51,14 +80,48 @@ export class Discover {
       }
     }
 
-    return { cachedUrls, uncacheableUrls, totalTested: this.defaultPaths.length };
+    return { cachedUrls, uncacheableUrls, totalTested: paths.length };
+  }
+
+  /**
+   * Depth-1 same-origin crawl: fetch the target HTML, extract href/src
+   * links, return pathnames (max 25). Best-effort — empty on any failure.
+   */
+  async crawl(): Promise<string[]> {
+    try {
+      const resp = await this.http.get(this.config.target, this.config.headers || {});
+      const origin = new URL(this.config.target).origin;
+      const paths = new Set<string>();
+      const re = /(?:href|src)\s*=\s*["']([^"'#]+)/gi;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(resp.body)) !== null && paths.size < 25) {
+        try {
+          const u = new URL(m[1], this.config.target);
+          if (u.origin === origin && u.pathname) paths.add(u.pathname);
+        } catch {
+          // Skip unparseable links (mailto:, javascript:, etc.)
+        }
+      }
+      return [...paths];
+    } catch {
+      return [];
+    }
   }
 
   async testCacheability(url: string): Promise<{ cacheable: boolean; cacheStatus: string; headers: Record<string, string> }> {
-    const resp1 = await this.http.get(url, this.config.headers || {});
-    const resp2 = await this.http.get(url, this.config.headers || {});
+    // Cache buster: both pair requests share one unique key so the pair
+    // starts from a cold entry instead of a pre-warmed/poisoned one.
+    const bust = Math.random().toString(36).substring(2, 10);
+    const busted = new URL(url);
+    busted.searchParams.set('_pc_bust', bust);
+    const pairUrl = busted.toString();
 
-    const cacheHeader = this.getCacheStatus(resp1.headers);
+    const resp1 = await this.http.get(pairUrl, this.config.headers || {});
+    const resp2 = await this.http.get(pairUrl, this.config.headers || {});
+
+    // resp2 is the (potential) HIT — prefer its cache status, fall back to resp1
+    const s2 = this.getCacheStatus(resp2.headers);
+    const cacheHeader = s2 === 'UNKNOWN' ? this.getCacheStatus(resp1.headers) : s2;
     const cacheable = resp1.status === resp2.status && resp1.body === resp2.body;
 
     return { cacheable, cacheStatus: cacheHeader, headers: resp1.headers };
