@@ -93,4 +93,18 @@ describe('partials', () => {
     expect(html).toContain(ID);
     expect(html).toContain('id="feed"');
   });
+
+  it('escapes quote-bearing severity so it cannot break out of the class attribute', () => {
+    const evil = [{ ...rows[0], severity: 'x" onmouseover="alert(1)' }];
+    for (const html of [tablePartial(evil), findingPartial(evil[0]), detailPartial(SUMMARY, [], { weaponize: [{ chains: [{ impact: { severity: 'x" onmouseover="alert(1)' } }] }] })]) {
+      expect(html).toContain('&quot;');
+      expect(html).not.toContain('onmouseover="alert(1)"');
+      expect(html).not.toMatch(/class="[^"]*x"/); // raw quote terminating the attribute
+    }
+  });
+
+  it('collapses whitespace in level class so it stays a single CSS class', () => {
+    const spaced = [{ ...rows[0], severity: 'HIGH RISK' }];
+    expect(tablePartial(spaced)).toContain('class="sev-high-risk"');
+  });
 });

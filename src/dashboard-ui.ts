@@ -12,7 +12,7 @@ export interface FeedItem {
   ts: number;
 }
 
-const LEVEL_CLASS = (v: string): string => `sev-${v.toLowerCase()}`;
+const LEVEL_CLASS = (v: string): string => `sev-${escapeHtml(v.toLowerCase()).replace(/\s+/g, '-')}`;
 
 export function shellHtml(): string {
   return `<!DOCTYPE html>
