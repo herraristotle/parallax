@@ -302,7 +302,7 @@ function flattenPipeline(reportId: string, r: PipelineResult, salt: string): Das
         classification: f.classification,
         confidence: f.confidence,
         evidence: `${f.inputType}:${f.inputName} canary=${f.canary}`,
-      }, `${f.inputType}|${f.inputName}|${f.classification}`);
+      }, `${f.inputType}|${f.inputName}|${f.classification}|${f.canary}`);
     }
   }
 
@@ -346,7 +346,7 @@ function flattenPipeline(reportId: string, r: PipelineResult, salt: string): Das
         confidence: c.finding?.confidence,
         severity: c.impact?.severity,
         evidence: c.poc?.curlCommand ?? c.poc?.description ?? '',
-      }, `${c.finding?.classification}|${c.finding?.inputName}|${c.impact?.severity}`);
+      }, `${c.finding?.classification}|${c.finding?.inputName}|${c.impact?.severity}|${c.poc?.curlCommand ?? ''}`);
     }
   }
 
@@ -471,7 +471,9 @@ describe('createReportWatcher', () => {
 
     fs.writeFileSync(path.join(dir, 'parallax-report-100.json'), JSON.stringify({ ...REPORT, extra: 1 }));
     await waitFor(() => events.some(e => e.type === 'report-changed'));
-    expect(events.filter(e => e.type === 'report-changed')).toHaveLength(1);
+    // writeFileSync truncates then writes, so a poll can land mid-write and see
+    // two distinct stats; either way at least one change event is expected.
+    expect(events.filter(e => e.type === 'report-changed').length).toBeGreaterThanOrEqual(1);
   });
 
   it('files present at start emit nothing (primed silently)', async () => {
@@ -569,6 +571,15 @@ export function createReportWatcher(opts: WatcherOptions): ReportWatcher {
   const state = new Map<string, { mtimeMs: number; size: number }>();
   let primed = false;
 
+  /** One throwing consumer must never stop the watcher (or crash the process). */
+  const emit = (ev: ReportChangeEvent): void => {
+    try {
+      opts.onEvent(ev);
+    } catch {
+      /* consumer failure is its own problem */
+    }
+  };
+
   const tick = (): void => {
     let names: string[];
     try {
@@ -591,10 +602,10 @@ export function createReportWatcher(opts: WatcherOptions): ReportWatcher {
       const prev = state.get(id);
       if (!prev) {
         state.set(id, { mtimeMs: st.mtimeMs, size: st.size });
-        if (!quiet) opts.onEvent({ type: 'report-added', id, ts: Date.now() });
+        if (!quiet) emit({ type: 'report-added', id, ts: Date.now() });
       } else if (prev.mtimeMs !== st.mtimeMs || prev.size !== st.size) {
         state.set(id, { mtimeMs: st.mtimeMs, size: st.size });
-        if (!quiet) opts.onEvent({ type: 'report-changed', id, ts: Date.now() });
+        if (!quiet) emit({ type: 'report-changed', id, ts: Date.now() });
       }
     }
     for (const id of [...state.keys()]) {
