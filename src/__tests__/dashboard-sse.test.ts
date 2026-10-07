@@ -87,7 +87,9 @@ describe('dashboard SSE /events', () => {
     const ac2 = new AbortController();
     const r1 = fetch(h.url + '/events', { signal: ac1.signal });
     const r2 = fetch(h.url + '/events', { signal: ac2.signal });
-    await Promise.all([r1, r2]); // both admitted (cap = 2)
+    const [c1, c2] = await Promise.all([r1, r2]); // both admitted (cap = 2)
+    expect(c1.status).toBe(200); // pin the admitted side: cap must not reject early
+    expect(c2.status).toBe(200);
     const third = await fetch(h.url + '/events');
     expect(third.status).toBe(429);
     ac1.abort(); ac2.abort();
@@ -109,7 +111,9 @@ describe('dashboard SSE /events', () => {
     ]);
     expect(result).not.toBe('timeout');
     // port released
-    await expect(startDashboard({ outputDir: dir, port })).resolves.toBeDefined();
+    const h2 = await startDashboard({ outputDir: dir, port });
+    expect(h2).toBeDefined();
+    handle = h2; // afterEach must close it — it owns a server, watcher and heartbeat
     ac.abort();
   });
 });
