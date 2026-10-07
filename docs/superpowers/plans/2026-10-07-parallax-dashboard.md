@@ -1651,29 +1651,40 @@ if (command !== 'dashboard' && !target) { /* existing usage+exit(1) */ }
 
 (Exact existing form: keep whatever error text/exit the file already uses; only add the command exemption.)
 
-2c. After the existing option-parsing loop, add cases in the same switch/if-chain style the file uses:
+2c. Inside the existing option loop's `switch`, add cases matching the file's `switch/case/break` style. Values validated warn-and-default (ruled I1: bare `Number()` lets NaN reach `server.listen` / `setInterval(fn, NaN)` → 1ms busy-poll):
 
 ```ts
-// inside option loop (same shape as existing --port/--flag handling)
-} else if (arg === '--port') { dashOpts.port = Number(args[++i]);
-} else if (arg === '--host') { dashOpts.host = args[++i];
-} else if (arg === '--poll') { dashOpts.pollMs = Number(args[++i]);
-} else if (arg === '--output' && command === 'dashboard') { dashOpts.outputDir = args[++i];
+// inside the option loop's switch
+case '--port': {
+  const n = parseInt(args[++i], 10);
+  if (Number.isInteger(n) && n >= 0 && n <= 65535) dashOpts.port = n;
+  else console.warn(`Warning: --port requires integer 0-65535, got "${args[i]}" — using default 7700`);
+  break;
+}
+case '--host':
+  dashOpts.host = args[++i];
+  break;
+case '--poll': {
+  const ms = parseInt(args[++i], 10);
+  if (Number.isInteger(ms) && ms > 0) dashOpts.pollMs = ms;
+  else console.warn(`Warning: --poll requires positive ms, got "${args[i]}" — using default 1000`);
+  break;
+}
 ```
 
 Declare near the top of main-equivalent scope:
 
 ```ts
-const dashOpts: { port?: number; host?: string; pollMs?: number; outputDir?: string } = {};
+const dashOpts: { port?: number; host?: string; pollMs?: number } = {};
 ```
 
-If the file already parses `--output` generically into `config.outputDir`, reuse that instead of adding a second `--output` case (grep `output` first).
+Reuse the file's existing generic `--output` case (already writes `config.outputDir`) — do not add a second `--output` case (grep `output` first).
 
 2d. Command dispatch — add a branch (before or alongside existing `scan`/`batch`/`discover` dispatch):
 
 ```ts
 if (command === 'dashboard') {
-  const outputDir = dashOpts.outputDir ?? config.outputDir ?? './output';
+  const outputDir = config.outputDir ?? './output';
   const handle = await startDashboard({
     outputDir,
     port: dashOpts.port,
