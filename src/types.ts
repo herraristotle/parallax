@@ -88,6 +88,8 @@ export interface PipelineResult {
   weaponize: WeaponizeResult[];
   /** Web Cache Deception findings (Gil 2017) — present when Stage 4b ran. */
   deception?: DeceptionFinding[];
+  /** Kettle internal-cache / ESI findings — present when Stage 5b ran. */
+  internal?: import('./cache-internal').InternalCacheFinding[];
 }
 
 /** Batch-scan failure record — schema for `error` entries in batch summaries. */

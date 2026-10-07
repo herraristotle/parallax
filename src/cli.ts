@@ -27,6 +27,7 @@ Options:
   --no-diff                 Disable byte-level diff fuzzing
   --no-poison               Disable header poisoning scan
   --no-deception            Disable web cache deception probing
+  --no-internal             Disable internal cache / ESI detection (Stage 5b)
   --no-weaponize            Disable exploit chain generation
   --http2                   Route GETs over HTTP/2 (falls back to HTTP/1.1)
   --bigquery-project <id>   GCP project for Stage-2 BigQuery header harvest
@@ -103,6 +104,9 @@ async function main(): Promise<void> {
         break;
       case '--no-deception':
         config.enableDeception = false;
+        break;
+      case '--no-internal':
+        config.enableInternalCache = false;
         break;
       case '--no-weaponize':
         config.enableWeaponize = false;

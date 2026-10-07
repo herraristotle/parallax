@@ -9,6 +9,7 @@ import { Discover } from './discover';
 import { CacheTiming } from './cache-timing';
 import { HttpClient } from './http-client';
 import { InteractshClient } from './oob';
+import { CacheInternal } from './cache-internal';
 
 /**
  * ParallaxPipeline — Five-stage differential cache analysis pipeline
@@ -157,6 +158,27 @@ export class ParallaxPipeline {
       await this.diff.run(discoverResult.cachedUrls);
     }
 
+    // Stage 5b: Internal cache / ESI detection (Kettle) — best-effort like 4b.
+    let internalFindings: PipelineResult['internal'];
+    if (this.config.enableInternalCache !== false) {
+      console.log('[Parallax] Stage 5b: Internal cache + ESI detection');
+      checkTimeBudget();
+      try {
+        const internal = new CacheInternal(
+          { target: this.config.target, cookie: this.config.cookie, headers: this.config.headers },
+          this.httpClient,
+          this.oob,
+        );
+        const findings = await internal.run();
+        if (findings.length > 0) {
+          internalFindings = findings;
+          console.log(`[Parallax]   ${findings.length} internal-cache finding(s)`);
+        }
+      } catch {
+        // Internal-cache pass is best-effort; never fail the scan.
+      }
+    }
+
     // Stage 6: Poison (WCP)
     if (this.config.enablePoison !== false) {
       console.log('[Parallax] Stage 6: Binary Search Header Testing + Classification');
@@ -191,6 +213,7 @@ export class ParallaxPipeline {
         : []
     };
     if (deceptionFindings) result.deception = deceptionFindings;
+    if (internalFindings) result.internal = internalFindings;
 
     console.log('[Parallax] Pipeline complete');
     return result;
