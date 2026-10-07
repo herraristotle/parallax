@@ -11,6 +11,7 @@ import { HttpClient } from './http-client';
 import { InteractshClient } from './oob';
 import { CacheInternal } from './cache-internal';
 import { TraceSink } from './trace';
+import { appendScanEvent } from './scan-events';
 
 /**
  * ParallaxPipeline — Five-stage differential cache analysis pipeline
@@ -110,6 +111,7 @@ export class ParallaxPipeline {
     this.trace?.setStage('probe');
     checkTimeBudget();
     const probeResult = await this.probe.run();
+    this.emitEvent('probe', `cdn=${probeResult.cdn.name}`);
     
     // Update poison config with detected CDN and framework
     (this.poison as any).config.cdnName = probeResult.cdn.name;
@@ -122,6 +124,7 @@ export class ParallaxPipeline {
     this.trace?.setStage('harvest');
     checkTimeBudget();
     const harvestResult = await this.harvest.run();
+    this.emitEvent('harvest', 'complete');
     this.poison.setHarvestedWordlist(harvestResult);
 
     // Stage 3: Timing (Hidden Cache Detection)
@@ -136,6 +139,7 @@ export class ParallaxPipeline {
       }, this.httpClient);
       const timingResult = await timing.detectHiddenCache();
       probeResult.hiddenCacheDetected = timingResult.hiddenCacheDetected;
+      this.emitEvent('timing', `hiddenCache=${probeResult.hiddenCacheDetected}`);
     }
 
     // Stage 4: Discover
@@ -143,6 +147,7 @@ export class ParallaxPipeline {
     this.trace?.setStage('discover');
     checkTimeBudget();
     const discoverResult = await this.discover(probeResult);
+    this.emitEvent('discover', `${discoverResult.cachedUrls.length} cached urls`);
 
     // Stage 4b: Web Cache Deception (Gil 2017) — cache stores dynamic content
     // under static-looking suffixes. Runs over candidate dynamic endpoints
@@ -163,6 +168,7 @@ export class ParallaxPipeline {
           ...discoverResult.uncacheableUrls,
         ];
         const findings = await deception.run(candidates);
+        this.emitEvent('deception', `${findings.length} finding(s)`);
         if (findings.length > 0) {
           deceptionFindings = findings;
           console.log(`[Parallax]   ${findings.length} deception finding(s), ${findings.filter(f => f.confirmed).length} confirmed`);
@@ -183,6 +189,7 @@ export class ParallaxPipeline {
         discoverResult.cachedUrls.push({ url, cacheStatus: 'UNKNOWN', cacheHeaders: {}, isTargetUrl: false });
       }
       await this.diff.run(discoverResult.cachedUrls);
+      this.emitEvent('diff', 'complete');
     }
 
     // Stage 5b: Internal cache / ESI detection (Kettle) — best-effort like 4b.
@@ -197,6 +204,7 @@ export class ParallaxPipeline {
           this.oob,
         );
         const findings = await internal.run();
+        this.emitEvent('internal', `${findings.length} finding(s)`);
         if (findings.length > 0) {
           internalFindings = findings;
           console.log(`[Parallax]   ${findings.length} internal-cache finding(s)`);
@@ -212,6 +220,7 @@ export class ParallaxPipeline {
       this.trace?.setStage('poison');
       checkTimeBudget();
       await this.poison.run(discoverResult.cachedUrls, this.config.wordlistTier || 'fast');
+      this.emitEvent('poison', `${this.poison.findings.length} finding(s)`);
     }
 
     // Stage 7: Weaponize
@@ -220,6 +229,7 @@ export class ParallaxPipeline {
       this.trace?.setStage('weaponize');
       checkTimeBudget();
       await this.weaponize.run(this.poison.findings);
+      this.emitEvent('weaponize', `${this.weaponize.results.length} chain(s)`);
     }
 
     const result: PipelineResult = {
@@ -245,7 +255,14 @@ export class ParallaxPipeline {
     if (internalFindings) result.internal = internalFindings;
 
     console.log('[Parallax] Pipeline complete');
+    this.emitEvent('complete', 'pipeline finished');
     return result;
+  }
+
+  /** Phase-2 dashboard telemetry — best-effort, never throws, on unless explicitly disabled. */
+  private emitEvent(stage: string, detail: string): void {
+    if (this.config.enableDashboardEvents === false) return;
+    appendScanEvent(this.config.outputDir ?? './output', { ts: Date.now(), stage, detail });
   }
 
   private calculatePoisonStats() {

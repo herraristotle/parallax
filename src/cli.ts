@@ -41,6 +41,7 @@ Options:
   --external                Merge katana + GAU endpoint discovery (binaries must be on PATH)
   --trace <file>            Write NDJSON trace (per-probe records + run summary)
   --time-budget <ms>        Pipeline wall-clock budget (default 300000)
+  --no-scan-events          Disable NDJSON stage telemetry (on by default after phase 2)
 `;
 
 async function main(): Promise<void> {
@@ -137,6 +138,9 @@ async function main(): Promise<void> {
       case '--no-weaponize':
         config.enableWeaponize = false;
         break;
+      case '--no-scan-events':
+        config.enableDashboardEvents = false;
+        break;
       case '--http2':
         config.http2 = true;
         break;
@@ -160,6 +164,9 @@ async function main(): Promise<void> {
       }
     }
   }
+
+  // Phase-2 scan telemetry defaults on; explicit --no-scan-events wins.
+  config.enableDashboardEvents ??= true;
 
   const logger = new Logger('cli', config.logLevel || 'info');
 

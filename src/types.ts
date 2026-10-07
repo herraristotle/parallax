@@ -84,6 +84,10 @@ export interface PipelineConfig {
   exec?: import('./discover').ExecRunner;
   /** NDJSON trace file — per-probe records + run/stage events + summary. */
   traceFile?: string;
+  /** Phase-2 dashboard telemetry: emit NDJSON scan events (default on; `false` disables). */
+  enableDashboardEvents?: boolean;
+  /** Where reports + scan-events.ndjson are written; defaults to './output'. */
+  outputDir?: string;
 }
 
 export interface PipelineResult {
