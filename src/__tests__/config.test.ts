@@ -8,6 +8,9 @@ describe('ParallaxConfigLoader', () => {
 
   afterEach(() => {
     process.env = { ...origEnv };
+    delete process.env.INTERACTSH_SERVER;
+    delete process.env.INTERACTSH_DOMAIN;
+    delete process.env.INTERACTSH_TOKEN;
   });
 
   it('should return default config when no file or env', () => {
@@ -50,6 +53,23 @@ describe('ParallaxConfigLoader', () => {
     expect(config.cookie).toBe('session=xyz');
     expect(config.wordlistTier).toBe('all');
     expect(config.timeBudgetMs).toBe(999);
+  });
+
+  it('should populate oob from INTERACTSH_* env', () => {
+    process.env.INTERACTSH_SERVER = 'https://oast.example';
+    process.env.INTERACTSH_DOMAIN = 'oast.example';
+    process.env.INTERACTSH_TOKEN = 'tok';
+
+    const config = ParallaxConfigLoader.load('/nonexistent/config.json');
+    expect(config.oob).toEqual({ server: 'https://oast.example', domain: 'oast.example', token: 'tok' });
+  });
+
+  it('should leave oob unset when server present without domain', () => {
+    process.env.INTERACTSH_SERVER = 'https://oast.example';
+    delete process.env.INTERACTSH_DOMAIN;
+
+    const config = ParallaxConfigLoader.load('/nonexistent/config.json');
+    expect(config.oob).toBeUndefined();
   });
 
   it('should return all profiles', () => {

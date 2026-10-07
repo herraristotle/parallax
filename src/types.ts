@@ -72,6 +72,12 @@ export interface PipelineConfig {
   enablePoison?: boolean;
   enableWeaponize?: boolean;
   enableDeception?: boolean;
+  /** Stage 5b internal-cache (Kettle) detection. */
+  enableInternalCache?: boolean;
+  /** Self-hosted interactsh OOB config; absent = OOB stages skipped. */
+  oob?: import('./oob').OobConfig;
+  /** Master OOB switch; defaults on when `oob` is set. */
+  enableOob?: boolean;
 }
 
 export interface PipelineResult {
@@ -285,6 +291,9 @@ export type ExploitClassification =
   | 'nextjs'
   | 'invalidation'
   | 'surrogate'
+  | 'oob_callback'
+  | 'cross_page_contamination'
+  | 'internal_cache'
   | 'payload_split'
   | 'waf_poison'
   | 'unknown';

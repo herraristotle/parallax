@@ -158,3 +158,103 @@ describe('CachePoison', () => {
     expect(auth.length).toBeGreaterThanOrEqual(3);
   });
 });
+
+interface FakeOob {
+  isReady(): boolean;
+  nextPayload(): string;
+  waitForInteraction(timeoutMs?: number, intervalMs?: number): Promise<any>;
+}
+
+function fakeOob(opts: {
+  ready?: boolean;
+  hit?: { fullId?: string; protocol?: string; remoteAddress?: string } | null;
+  counter?: { waits: number };
+}): FakeOob {
+  return {
+    isReady: () => opts.ready !== false,
+    nextPayload: () => `lbl${Math.random().toString(16).slice(2, 10)}.cid-oob.oast.example`,
+    waitForInteraction: async () => {
+      if (opts.counter) opts.counter.waits++;
+      return opts.hit ?? null;
+    },
+  };
+}
+
+function httpSpy() {
+  const state = { calls: 0 };
+  const client = {
+    get: async () => {
+      state.calls++;
+      return { status: 200, headers: {}, body: 'ok' };
+    },
+  } as unknown as import('../http-client').HttpClient;
+  return { client, state };
+}
+
+describe('CachePoison OOB modules', () => {
+  it('does nothing when OOB client absent — zero HTTP calls', async () => {
+    const { client, state } = httpSpy();
+    const poison = new CachePoison({ target: 'https://example.com' }, client);
+    await (poison as any).testOobHeaderInjection('https://example.com', {});
+    await (poison as any).testCrossPageContamination('https://example.com', {});
+    expect(state.calls).toBe(0);
+    expect(poison.findings).toHaveLength(0);
+  });
+
+  it('does nothing when OOB client not ready — zero HTTP calls, zero waits', async () => {
+    const { client, state } = httpSpy();
+    const counter = { waits: 0 };
+    const poison = new CachePoison({ target: 'https://example.com' }, client);
+    poison.setOob(fakeOob({ ready: false, counter }) as any);
+    await (poison as any).testOobHeaderInjection('https://example.com', {});
+    await (poison as any).testCrossPageContamination('https://example.com', {});
+    expect(state.calls).toBe(0);
+    expect(counter.waits).toBe(0);
+    expect(poison.findings).toHaveLength(0);
+  });
+
+  it('header injection: callback → CONFIRMED oob_callback, single bounded wait', async () => {
+    const { client, state } = httpSpy();
+    const counter = { waits: 0 };
+    const poison = new CachePoison({ target: 'https://example.com' }, client);
+    poison.setOob(fakeOob({ hit: { fullId: 'lbl1.cid-oob.oast.example' }, counter }) as any);
+    await (poison as any).testOobHeaderInjection('https://example.com', {});
+    // All 6 curated headers fired, but only ONE wait for the batch.
+    expect(state.calls).toBe(6);
+    expect(counter.waits).toBe(1);
+    expect(poison.findings).toHaveLength(1);
+    expect(poison.findings[0].classification).toBe('oob_callback');
+    expect(poison.findings[0].attackClass).toBe('header_poison');
+    expect(poison.findings[0].confidence).toBe('CONFIRMED');
+  });
+
+  it('header injection: timeout → no finding', async () => {
+    const { client } = httpSpy();
+    const poison = new CachePoison({ target: 'https://example.com' }, client);
+    poison.setOob(fakeOob({ hit: null }) as any);
+    await (poison as any).testOobHeaderInjection('https://example.com', {});
+    expect(poison.findings).toHaveLength(0);
+  });
+
+  it('cross-page contamination: callback → CONFIRMED cross_page_contamination', async () => {
+    const { client, state } = httpSpy();
+    const counter = { waits: 0 };
+    const poison = new CachePoison({ target: 'https://example.com' }, client);
+    poison.setOob(fakeOob({ hit: { protocol: 'dns' }, counter }) as any);
+    await (poison as any).testCrossPageContamination('https://example.com', {});
+    expect(state.calls).toBe(2); // prime + cache-busted probe
+    expect(counter.waits).toBe(1);
+    expect(poison.findings).toHaveLength(1);
+    expect(poison.findings[0].classification).toBe('cross_page_contamination');
+    expect(poison.findings[0].attackClass).toBe('content_poison');
+    expect(poison.findings[0].confidence).toBe('CONFIRMED');
+  });
+
+  it('cross-page contamination: timeout → no finding', async () => {
+    const { client } = httpSpy();
+    const poison = new CachePoison({ target: 'https://example.com' }, client);
+    poison.setOob(fakeOob({ hit: null }) as any);
+    await (poison as any).testCrossPageContamination('https://example.com', {});
+    expect(poison.findings).toHaveLength(0);
+  });
+});

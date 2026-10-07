@@ -84,6 +84,16 @@ export class ParallaxConfigLoader {
     if (process.env.PARALLAX_COOKIE) config.cookie = process.env.PARALLAX_COOKIE;
     if (process.env.PARALLAX_WORDLIST_TIER) config.wordlistTier = process.env.PARALLAX_WORDLIST_TIER as 'fast' | 'all';
     if (process.env.PARALLAX_TIME_BUDGET) config.timeBudgetMs = parseInt(process.env.PARALLAX_TIME_BUDGET);
+    // OOB: requires both server and domain (empty = disabled; diverges from
+    // oob-helper.sh, where empty server means the public pool).
+    if (process.env.INTERACTSH_SERVER && process.env.INTERACTSH_DOMAIN) {
+      const server = process.env.INTERACTSH_SERVER.trim();
+      const domain = process.env.INTERACTSH_DOMAIN.trim();
+      const token = (process.env.INTERACTSH_TOKEN || '').trim();
+      if (server && domain) {
+        config.oob = token ? { server, domain, token } : { server, domain };
+      }
+    }
     return config;
   }
 

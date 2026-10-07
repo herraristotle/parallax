@@ -8,6 +8,7 @@ import { Weaponize } from './weaponize';
 import { Discover } from './discover';
 import { CacheTiming } from './cache-timing';
 import { HttpClient } from './http-client';
+import { InteractshClient } from './oob';
 
 /**
  * ParallaxPipeline — Five-stage differential cache analysis pipeline
@@ -28,6 +29,7 @@ export class ParallaxPipeline {
   private poison: CachePoison;
   private weaponize: Weaponize;
   private httpClient: HttpClient;
+  private oob: InteractshClient | null = null;
 
   constructor(config: PipelineConfig) {
     this.config = config;
@@ -51,12 +53,28 @@ export class ParallaxPipeline {
       framework: 'unknown'
     }, this.httpClient);
     this.weaponize = new Weaponize(config.target);
+    // OOB client: only when configured and not disabled; register() is
+    // attempted lazily at run() so constructor never does I/O.
+    if (config.oob && config.enableOob !== false) {
+      this.oob = new InteractshClient(config.oob);
+      this.poison.setOob(this.oob);
+    }
   }
 
   async run(): Promise<PipelineResult> {
     console.log(`[Parallax] Starting pipeline for ${this.config.target}`);
     const startTime = Date.now();
     const timeBudget = this.config.timeBudgetMs || 300000;
+
+    // OOB registration is best-effort — failure disables the client, scan continues.
+    if (this.oob) {
+      const ok = await this.oob.register();
+      if (!ok) {
+        console.log('[Parallax]   OOB register failed — continuing without callback evidence');
+        this.oob = null;
+        this.poison.setOob(null);
+      }
+    }
 
     const checkTimeBudget = () => {
       if (Date.now() - startTime > timeBudget) {
@@ -215,4 +233,5 @@ export class ParallaxPipeline {
   getDiff() { return this.diff; }
   getPoison() { return this.poison; }
   getWeaponize() { return this.weaponize; }
+  getOob() { return this.oob; }
 }
