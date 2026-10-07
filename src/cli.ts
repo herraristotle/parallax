@@ -34,6 +34,7 @@ Options:
                             (creds via GOOGLE_APPLICATION_CREDENTIALS)
   --external                Merge katana + GAU endpoint discovery (binaries must be on PATH)
   --trace <file>            Write NDJSON trace (per-probe records + run summary)
+  --time-budget <ms>        Pipeline wall-clock budget (default 300000)
 `;
 
 async function main(): Promise<void> {
@@ -86,6 +87,15 @@ async function main(): Promise<void> {
       case '--trace':
         config.traceFile = args[++i];
         break;
+      case '--time-budget': {
+        const ms = parseInt(args[++i], 10);
+        if (isNaN(ms) || ms <= 0) {
+          console.warn(`Warning: --time-budget requires positive ms, got "${args[i]}"`);
+        } else {
+          config.timeBudgetMs = ms;
+        }
+        break;
+      }
       case '--format': {
         const f = args[++i];
         if (f === 'json' || f === 'markdown' || f === 'html') {
