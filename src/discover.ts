@@ -1,5 +1,10 @@
 import { DiscoverResult, CachedUrl, ProbeResult } from './types';
 import { HttpClient } from './http-client';
+import { Logger } from './logger';
+import { execFile } from 'child_process';
+
+/** Runs an external binary, returns stdout. Injected in tests. */
+export type ExecRunner = (cmd: string, args: string[]) => Promise<string>;
 
 export interface DiscoverConfig {
   target: string;
@@ -7,11 +12,26 @@ export interface DiscoverConfig {
   headers?: Record<string, string>;
   wordlist?: 'fast' | 'all';
   crawl?: boolean;
+  /** Opt-in: merge katana crawl + GAU historical URLs (parity with competitor). */
+  external?: boolean;
+  exec?: ExecRunner;
 }
+
+/** Real runner: rejects on spawn failure/timeout so the caller can warn. */
+const defaultExec: ExecRunner = (cmd, args) =>
+  new Promise((resolve, reject) => {
+    execFile(
+      cmd,
+      args,
+      { timeout: 120_000, maxBuffer: 10 * 1024 * 1024, windowsHide: true },
+      (err, stdout) => (err ? reject(err) : resolve(stdout)),
+    );
+  });
 
 export class Discover {
   private config: DiscoverConfig;
   private http: HttpClient;
+  private readonly log = new Logger('discover');
 
   defaultPaths = [
     '/', '/index.html', '/index.htm', '/default.html',
@@ -61,7 +81,8 @@ export class Discover {
     const uncacheableUrls: string[] = [];
     const wordlist = this.config.wordlist === 'all' ? this.allPaths : this.defaultPaths;
     const crawled = this.config.crawl === false ? [] : await this.crawl();
-    const paths = [...new Set([...crawled, ...wordlist])];
+    const external = await this.externalPaths();
+    const paths = [...new Set([...crawled, ...external, ...wordlist])];
 
     for (const path of paths) {
       const url = new URL(this.config.target);
@@ -106,6 +127,44 @@ export class Discover {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * External discovery (parity with competitor pipeline): katana deep crawl
+   * + GAU historical URLs. Hostname-matched pathnames only. Any failure
+   * (binary not installed, timeout, junk output) degrades to [].
+   */
+  async externalPaths(): Promise<string[]> {
+    if (!this.config.external) return [];
+    const run = this.config.exec ?? defaultExec;
+    const host = new URL(this.config.target).hostname;
+    const source = async (cmd: string, args: string[]): Promise<string> => {
+      try {
+        return await run(cmd, args);
+      } catch (err) {
+        this.log.warn(`${cmd} unavailable — install it or drop --external; continuing without its output`, {
+          cmd,
+          error: (err as Error).message,
+        });
+        return '';
+      }
+    };
+    const [katanaOut, gauOut] = await Promise.all([
+      source('katana', ['-u', this.config.target, '-d', '3', '-silent']),
+      source('gau', [host]),
+    ]);
+    const paths = new Set<string>();
+    for (const line of `${katanaOut}\n${gauOut}`.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const u = new URL(trimmed, this.config.target);
+        if (u.hostname === host && u.pathname) paths.add(u.pathname);
+      } catch {
+        // Skip junk lines (non-URL output, banners)
+      }
+    }
+    return [...paths];
   }
 
   async testCacheability(url: string): Promise<{ cacheable: boolean; cacheStatus: string; headers: Record<string, string> }> {

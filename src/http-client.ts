@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import * as http2 from 'node:http2';
+import type { TraceSink } from './trace';
 
 export interface HttpConfig {
   timeoutMs: number;
@@ -10,6 +11,8 @@ export interface HttpConfig {
   /** Route GETs through a persistent HTTP/2 session per origin (stdlib
    *  node:http2). Falls back to HTTP/1.1 fetch when the origin refuses h2. */
   http2?: boolean;
+  /** NDJSON trace sink — when set, every completed request emits a probe record. */
+  trace?: TraceSink;
 }
 
 export interface HttpResponse {
@@ -123,7 +126,7 @@ export class HttpClient {
       });
 
       this.requestCount++;
-      return {
+      const resp = {
         status: result.status,
         headers: result.headers,
         body: result.body,
@@ -131,6 +134,10 @@ export class HttpClient {
         timingMs: Date.now() - start,
         fromCache: this.detectCache(result.headers),
       };
+      this.config.trace?.probe({
+        method: 'GET', url, status: resp.status, latencyMs: resp.timingMs, bodyHash: resp.bodyHash,
+      });
+      return resp;
     } catch (err) {
       if (session.destroyed || session.closed) this.h2Sessions.delete(origin);
       throw err;
@@ -228,8 +235,7 @@ export class HttpClient {
         });
 
         const fromCache = this.detectCache(resHeaders);
-
-        return {
+        const resp: HttpResponse = {
           status: res.status,
           headers: resHeaders,
           body: responseBody,
@@ -237,12 +243,17 @@ export class HttpClient {
           timingMs: elapsed,
           fromCache,
         };
+        this.config.trace?.probe({
+          method, url, status: resp.status, latencyMs: resp.timingMs, bodyHash: resp.bodyHash,
+        });
+        return resp;
       } catch (err) {
         clearTimeout(timeoutId);
         lastError = err instanceof Error ? err : new Error(String(err));
       }
     }
 
+    this.config.trace?.probe({ method, url, status: 0, latencyMs: 0, error: lastError?.message });
     throw lastError ?? new Error('Request failed after retries');
   }
 

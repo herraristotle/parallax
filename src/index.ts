@@ -10,9 +10,11 @@ export { HttpClient } from './http-client';
 export { rawHeaderRequest } from './raw-http';
 export { CacheTiming } from './cache-timing';
 export { Discover } from './discover';
+export type { DiscoverConfig, ExecRunner } from './discover';
 export { CacheDeception } from './cache-deception';
 export { ParallaxConfigLoader } from './config';
 export { Logger } from './logger';
+export { TraceSink } from './trace';
 export { ReportExporter } from './report';
 
 export type {

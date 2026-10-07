@@ -32,6 +32,8 @@ Options:
   --http2                   Route GETs over HTTP/2 (falls back to HTTP/1.1)
   --bigquery-project <id>   GCP project for Stage-2 BigQuery header harvest
                             (creds via GOOGLE_APPLICATION_CREDENTIALS)
+  --external                Merge katana + GAU endpoint discovery (binaries must be on PATH)
+  --trace <file>            Write NDJSON trace (per-probe records + run summary)
 `;
 
 async function main(): Promise<void> {
@@ -77,6 +79,12 @@ async function main(): Promise<void> {
       }
       case '--wordlist':
         config.wordlistTier = args[++i] as 'fast' | 'all';
+        break;
+      case '--external':
+        config.external = true;
+        break;
+      case '--trace':
+        config.traceFile = args[++i];
         break;
       case '--format': {
         const f = args[++i];

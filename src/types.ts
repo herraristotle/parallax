@@ -78,6 +78,12 @@ export interface PipelineConfig {
   oob?: import('./oob').OobConfig;
   /** Master OOB switch; defaults on when `oob` is set. */
   enableOob?: boolean;
+  /** Opt-in katana + GAU endpoint discovery (competitor parity). */
+  external?: boolean;
+  /** Injectable external-binary runner (tests). */
+  exec?: import('./discover').ExecRunner;
+  /** NDJSON trace file — per-probe records + run/stage events + summary. */
+  traceFile?: string;
 }
 
 export interface PipelineResult {
