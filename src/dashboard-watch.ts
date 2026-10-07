@@ -30,6 +30,15 @@ export function createReportWatcher(opts: WatcherOptions): ReportWatcher {
   const state = new Map<string, { mtimeMs: number; size: number }>();
   let primed = false;
 
+  /** One throwing consumer must never stop the watcher (or crash the process). */
+  const emit = (ev: ReportChangeEvent): void => {
+    try {
+      opts.onEvent(ev);
+    } catch {
+      /* consumer failure is its own problem */
+    }
+  };
+
   const tick = (): void => {
     let names: string[];
     try {
@@ -52,10 +61,10 @@ export function createReportWatcher(opts: WatcherOptions): ReportWatcher {
       const prev = state.get(id);
       if (!prev) {
         state.set(id, { mtimeMs: st.mtimeMs, size: st.size });
-        if (!quiet) opts.onEvent({ type: 'report-added', id, ts: Date.now() });
+        if (!quiet) emit({ type: 'report-added', id, ts: Date.now() });
       } else if (prev.mtimeMs !== st.mtimeMs || prev.size !== st.size) {
         state.set(id, { mtimeMs: st.mtimeMs, size: st.size });
-        if (!quiet) opts.onEvent({ type: 'report-changed', id, ts: Date.now() });
+        if (!quiet) emit({ type: 'report-changed', id, ts: Date.now() });
       }
     }
     for (const id of [...state.keys()]) {
