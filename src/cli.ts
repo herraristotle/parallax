@@ -5,6 +5,7 @@ import { ParallaxConfigLoader } from './config';
 import { Logger } from './logger';
 import { ReportExporter, ReportFormat } from './report';
 import { PipelineResult, PipelineErrorEntry } from './types';
+import { startDashboard } from './dashboard-server';
 
 const USAGE = `
 Parallax Cache Toolkit — Differential cache analysis for web cache poisoning
@@ -13,6 +14,11 @@ Usage:
   parallax scan <target> [options]     Scan a target URL
   parallax batch <file> [options]      Scan multiple targets from file
   parallax discover <target>           Discover cacheable endpoints
+  parallax dashboard [options]         Serve live dashboard over report files (no target needed)
+    --port <n>                         Dashboard port (default 7700)
+    --host <addr>                      Bind address (default 127.0.0.1)
+    --output <dir>                     Watched output dir (default ./output)
+    --poll <ms>                        Watcher poll interval (default 1000)
   parallax --help                      Show this help
 
 Options:
@@ -46,9 +52,10 @@ async function main(): Promise<void> {
   }
 
   const command = args[0];
+  // `dashboard` takes no target: args[1] onward are its options (never used as config.target)
   const target = args[1];
 
-  if (!target && command !== '--help' && command !== 'batch') {
+  if (!target && command !== '--help' && command !== 'batch' && command !== 'dashboard') {
     console.error('Error: target required');
     console.log(USAGE);
     process.exit(1);
@@ -59,7 +66,8 @@ async function main(): Promise<void> {
 
   // Parse CLI options
   let reportFormat: ReportFormat | undefined;
-  for (let i = 2; i < args.length; i++) {
+  const dashOpts: { port?: number; host?: string; pollMs?: number } = {};
+  for (let i = command === 'dashboard' ? 1 : 2; i < args.length; i++) {
     switch (args[i]) {
       case '--profile':
         config.profile = args[++i] as 'fast' | 'full' | 'stealth';
@@ -135,12 +143,47 @@ async function main(): Promise<void> {
       case '--bigquery-project':
         config.bigQueryProject = args[++i];
         break;
+      case '--port':
+        dashOpts.port = Number(args[++i]);
+        break;
+      case '--host':
+        dashOpts.host = args[++i];
+        break;
+      case '--poll':
+        dashOpts.pollMs = Number(args[++i]);
+        break;
     }
   }
 
   const logger = new Logger('cli', config.logLevel || 'info');
 
-  if (command === 'scan') {
+  if (command === 'dashboard') {
+    const outputDir = config.outputDir ?? './output';
+    const handle = await startDashboard({
+      outputDir,
+      port: dashOpts.port,
+      host: dashOpts.host,
+      pollMs: dashOpts.pollMs,
+      logger: undefined, // default Logger inside startDashboard
+    });
+
+    console.log(`[Parallax] Dashboard: ${handle.url}  (output: ${outputDir})`);
+    console.log('[Parallax] Ctrl+C to stop');
+
+    let stopping = false;
+    const shutdown = async (sig: string) => {
+      if (stopping) { process.exit(1); } // second signal force-exits
+      stopping = true;
+      console.log(`\n[Parallax] ${sig} — shutting down dashboard`);
+      await handle.close();
+      process.exit(0);
+    };
+    process.on('SIGINT', () => void shutdown('SIGINT'));
+    process.on('SIGTERM', () => void shutdown('SIGTERM'));
+
+    // resolve never: server keeps the loop alive
+    await new Promise<never>(() => {});
+  } else if (command === 'scan') {
     logger.info(`Starting scan of ${target}`, {
       profile: config.wordlistTier,
       timing: config.enableTiming,
