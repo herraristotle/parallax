@@ -61,7 +61,7 @@ function flattenPipeline(reportId: string, r: PipelineResult, salt: string): Das
         classification: f.classification,
         confidence: f.confidence,
         evidence: `${f.inputType}:${f.inputName} canary=${f.canary}`,
-      }, `${f.inputType}|${f.inputName}|${f.classification}`);
+      }, `${f.inputType}|${f.inputName}|${f.classification}|${f.canary}`);
     }
   }
 
@@ -105,7 +105,7 @@ function flattenPipeline(reportId: string, r: PipelineResult, salt: string): Das
         confidence: c.finding?.confidence,
         severity: c.impact?.severity,
         evidence: c.poc?.curlCommand ?? c.poc?.description ?? '',
-      }, `${c.finding?.classification}|${c.finding?.inputName}|${c.impact?.severity}`);
+      }, `${c.finding?.classification}|${c.finding?.inputName}|${c.impact?.severity}|${c.poc?.curlCommand ?? ''}`);
     }
   }
 

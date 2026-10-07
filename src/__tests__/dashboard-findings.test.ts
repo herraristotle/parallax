@@ -106,6 +106,25 @@ describe('flattenFindings', () => {
     expect(rows.every(r => r.report === ID)).toBe(true);
     expect(new Set(rows.map(r => r.id)).size).toBe(rows.length);
   });
+
+  it('poison rows differing only by canary get distinct ids', () => {
+    const r = fixture();
+    r.poison[0].findings.push({ ...r.poison[0].findings[0], canary: 'c2' });
+    const rows = flattenFindings(ID, r).filter(x => x.source === 'poison');
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map(x => x.id)).size).toBe(2);
+  });
+
+  it('weaponize chains differing only by poc get distinct ids', () => {
+    const r = fixture();
+    r.weaponize[0].chains.push({
+      ...r.weaponize[0].chains[0],
+      poc: { curlCommand: 'curl -X POST https://a.test/page' },
+    });
+    const rows = flattenFindings(ID, r).filter(x => x.source === 'weaponize');
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map(x => x.id)).size).toBe(2);
+  });
 });
 
 describe('summarizeReport', () => {
