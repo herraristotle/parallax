@@ -1014,7 +1014,7 @@ wc -c src/vendor/htmx.min.js
 grep -c htmx src/vendor/htmx.min.js
 ```
 
-Expected: size ~14000-20000 bytes, grep ≥ 1. Then:
+Expected: size ~50917 bytes (htmx 2.0.4 min build measured at implementation; earlier ~15KB estimate was htmx-1.x-era), grep ≥ 1. Then:
 
 ```bash
 git check-ignore src/vendor/htmx.min.js && git add -f src/vendor/htmx.min.js || git add src/vendor/htmx.min.js
@@ -1028,6 +1028,7 @@ git check-ignore src/vendor/htmx.min.js && git add -f src/vendor/htmx.min.js || 
 // src/__tests__/dashboard-server.test.ts
 import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';
+import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import { startDashboard, type DashboardHandle } from '../dashboard-server';
@@ -1151,12 +1152,24 @@ describe('dashboard-server', () => {
     expect(await list.text()).toContain('/partials/detail?id=');
   });
 
-  it('non-GET methods and unknown paths 404; malformed request path keeps server alive', async () => {
+  it('non-GET methods and unknown paths 404; handler throw → 500, process stays alive', async () => {
     const h = await boot();
     expect((await fetch(h.url + '/nope')).status).toBe(404);
     expect((await fetch(h.url + '/healthz', { method: 'POST' })).status).toBe(404);
-    // odd encoding — must not crash the process
-    try { await fetch(h.url + '/%'); } catch { /* client-side URL rejection is fine */ }
+    // absolute-form target `http://[` makes new URL() throw at route entry → caught → 500 JSON
+    // (fetch normalizes paths, so use raw http.request; controller-probed on Node v24.6.0)
+    const raw = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const r = http.request({ host: '127.0.0.1', port: h.port, path: 'http://[', method: 'GET' }, res => {
+        let b = '';
+        res.on('data', c => { b += c; });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: b }));
+      });
+      r.on('error', reject);
+      r.end();
+    });
+    expect(raw.status).toBe(500);
+    expect(raw.body).toContain('internal error');
+    // process never crashed — healthz still serves
     expect((await fetch(h.url + '/healthz')).status).toBe(200);
   });
 
@@ -1412,7 +1425,7 @@ Expected: all green.
 
 ```bash
 git add src/vendor/htmx.min.js src/dashboard-server.ts src/__tests__/dashboard-server.test.ts
-git commit -m "feat(dashboard): stdlib http server — JSON APIs, partials, healthz, vendor htmx 2.0.4 (~15KB)
+git commit -m "feat(dashboard): stdlib http server — JSON APIs, partials, healthz, vendor htmx 2.0.4 (50917 bytes)
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ```
