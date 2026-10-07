@@ -34,6 +34,7 @@ User decisions (2026-10-07):
 | `GET /api/reports` | Summary list `[{id, file, target, ts, cdn, counts}]` (id = safe basename) |
 | `GET /api/report?id=` | Full `PipelineResult` JSON (or batch file → array, error entries skipped) |
 | `GET /api/findings?severity=&type=&q=&source=` | Flattened findings, server-side filter |
+| `GET /healthz` | `200 {"ok":true,"reports":N}` liveness probe (no auth needed — localhost) |
 | `GET /partials/list` `/partials/table` `/partials/detail?id=` `/partials/feed` | Server-rendered HTML fragments — htmx swaps |
 
 No SSE extension needed: bootstrap calls `htmx.trigger('body', 'refresh')`; partials declare `hx-trigger="refresh from:body"` (plus `every 5s` poll fallback if SSE drops).
@@ -111,7 +112,8 @@ pipeline.run() ──writes──► output/*.json
 1. **Normalizer** — full PipelineResult → expected DashFinding rows; error-entry batches skipped; absent optional stages tolerated; unknown classification preserved as string.
 2. **Watcher** — temp dir: create → event; modify → event; malformed → no event, no throw; non-matching filename → ignored; injectable interval, no wall-clock sleeps beyond tick.
 3. **Server** — start on port 0: `/` shell contains htmx vendor tag; `/api/reports` lists temp-dir files; `/api/report?id=bad` → 404; `/api/findings?severity=high` filters; `/vendor/htmx.min.js` 200; SSE emits `report-added` when watcher fires (read first event, close).
-4. **Phase 2** — `appendScanEvent` writes parseable line; pipeline hook failure → scan unaffected; tail → SSE `scan-event`.
+4. **Production behaviors** — XSS: report evidence containing `<script>` comes back escaped from partials; `/healthz` 200 with report count; handler throw → 500, process alive; SIGINT → clean exit; SSE cap → 429.
+5. **Phase 2** — `appendScanEvent` writes parseable line; pipeline hook failure → scan unaffected; tail → SSE `scan-event`.
 
 Baseline: 166/166 must stay green; additions land as new test files.
 
@@ -122,12 +124,30 @@ Baseline: 166/166 must stay green; additions land as new test files.
 
 Both phases in this spec; plan execution delivers phase 1 fully, then phase 2 (user may cut phase 2 at review).
 
+## Production readiness (requirement, 2026-10-07)
+
+Industry-standard bar for a local HTTP service — all mandatory:
+
+| Item | Behavior |
+|---|---|
+| **XSS escaping** | Reports embed attacker-controlled strings (URLs, headers, evidence). Every value interpolated into server-rendered partials HTML-escaped (`&<>"'`); JSON routes served `application/json` (never re-embedded into HTML unescaped). Test: report containing `<script>` renders inert. |
+| **Graceful shutdown** | SIGINT/SIGTERM → stop watcher, close all SSE streams, `server.close()`; process exits 0. Second signal force-exits. |
+| **Health** | `GET /healthz` → `200 {"ok":true,"reports":N}` (platform `/health` precedent) — probes liveness without hitting UI. |
+| **SSE production behavior** | Heartbeat every 25s (have); concurrent-client cap (default 32) → 429 beyond; per-client listener cleanup on `close`/`error`. |
+| **Handler isolation** | Route handler throw → logged 500 JSON, process never crashes; unhandled rejection guard at entrypoint. |
+| **Logging** | Existing `Logger` — startup logs bind addr + poll interval; report-change events at debug, warnings on malformed files. |
+| **Timeouts** | Node defaults kept (`headersTimeout`/`requestTimeout`); SSE response exempt from body timeout via `res.setTimeout(0)`. |
+| **Portability** | Windows-safe stat-poll (have); no POSIX-only APIs; paths via `path`. |
+
+Scope note: external-binary gaps (katana, GAU — R12/R13) are discover-stage items handled by `child_process` spawn against PATH binaries; no Python rewrite, nothing dashboard-side. Platform's own "enterprise bar" (CI, S-1/S-3 hardening, lockfiles — gap-analysis §7) stays platform backlog, not this spec.
+
 ## Out of scope
 
-- Auth / TLS / reverse-proxy config (localhost assumption documented).
+- Auth / TLS / reverse-proxy config (localhost assumption documented; bind 127.0.0.1 is the security boundary).
 - Caido/Burp/ZAP integration — dashboard is proxy-agnostic by design.
 - Any pipeline behavior change, report schema change, or deletions.
 - Mid-scan *findings* streaming (findings only appear when a report file lands; stage progress is phase 2).
+- External binary acquisition (katana/GAU) — discover concern, PATH-spawn pattern.
 - Auto-opening browser, hot reload, multi-user sessions.
 
 ## Risks
