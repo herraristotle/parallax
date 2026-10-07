@@ -1505,17 +1505,20 @@ describe('dashboard SSE /events', () => {
 
   it('streams report-added when a report file lands (Review Focus: watcher→SSE)', async () => {
     const h = await boot();
-    const seen = readSse(h.url + '/events', s => s.includes('event: report-added'));
+    // both watcher events must arrive on one connected stream: a *new* stream opened
+    // after the writes cannot replay them (the route has no Last-Event-ID replay).
+    const seen = readSse(h.url + '/events', s => s.includes('event: report-changed'));
     // give the stream a tick to connect before the write
     await new Promise(r => setTimeout(r, 50));
     fs.writeFileSync(path.join(dir, `${ID}.json`), REPORT);
+    // let the poll watcher observe the add before mutating the file
+    await new Promise(r => setTimeout(r, 200));
+    // second write of same content but different size/mtime → report-changed (or add if watcher raced)
+    fs.writeFileSync(path.join(dir, `${ID}.json`), REPORT + ' ');
     const text = await seen;
     expect(text).toContain('event: report-added');
     expect(text).toContain(`"id":"${ID}"`);
-    // second write of same content but different size/mtime → report-changed (or add if watcher raced)
-    fs.writeFileSync(path.join(dir, `${ID}.json`), REPORT + ' ');
-    const h2 = await readSse(h.url + '/events', s => s.includes('event: report-'));
-    expect(h2).toMatch(/event: report-(added|changed)/);
+    expect(text).toMatch(/event: report-(added|changed)/);
   });
 
   it('opens with : connected comment', async () => {
