@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';
+import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import { startDashboard, type DashboardHandle } from '../dashboard-server';
@@ -123,12 +124,24 @@ describe('dashboard-server', () => {
     expect(await list.text()).toContain('/partials/detail?id=');
   });
 
-  it('non-GET methods and unknown paths 404; malformed request path keeps server alive', async () => {
+  it('non-GET methods and unknown paths 404; handler throw → 500, process stays alive', async () => {
     const h = await boot();
     expect((await fetch(h.url + '/nope')).status).toBe(404);
     expect((await fetch(h.url + '/healthz', { method: 'POST' })).status).toBe(404);
-    // odd encoding — must not crash the process
-    try { await fetch(h.url + '/%'); } catch { /* client-side URL rejection is fine */ }
+    // absolute-form target `http://[` makes new URL() throw at route entry → caught → 500 JSON
+    // (fetch normalizes paths, so use raw http.request; controller-probed on Node v24.6.0)
+    const raw = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const r = http.request({ host: '127.0.0.1', port: h.port, path: 'http://[', method: 'GET' }, res => {
+        let b = '';
+        res.on('data', c => { b += c; });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: b }));
+      });
+      r.on('error', reject);
+      r.end();
+    });
+    expect(raw.status).toBe(500);
+    expect(raw.body).toContain('internal error');
+    // process never crashed — healthz still serves
     expect((await fetch(h.url + '/healthz')).status).toBe(200);
   });
 
