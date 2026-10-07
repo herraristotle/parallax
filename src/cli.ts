@@ -143,15 +143,21 @@ async function main(): Promise<void> {
       case '--bigquery-project':
         config.bigQueryProject = args[++i];
         break;
-      case '--port':
-        dashOpts.port = Number(args[++i]);
+      case '--port': {
+        const n = parseInt(args[++i], 10);
+        if (Number.isInteger(n) && n >= 0 && n <= 65535) dashOpts.port = n;
+        else console.warn(`Warning: --port requires integer 0-65535, got "${args[i]}" — using default 7700`);
         break;
+      }
       case '--host':
         dashOpts.host = args[++i];
         break;
-      case '--poll':
-        dashOpts.pollMs = Number(args[++i]);
+      case '--poll': {
+        const ms = parseInt(args[++i], 10);
+        if (Number.isInteger(ms) && ms > 0) dashOpts.pollMs = ms;
+        else console.warn(`Warning: --poll requires positive ms, got "${args[i]}" — using default 1000`);
         break;
+      }
     }
   }
 
