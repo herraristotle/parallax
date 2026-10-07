@@ -163,6 +163,22 @@ export async function startDashboard(opts: DashboardOptions): Promise<DashboardH
 
     if (p === '/partials/feed') { html(res, 200, feedPartial(feed)); return; }
 
+    if (p === '/events') {
+      if (sseClients.size >= maxSse) { json(res, 429, { error: 'too many sse clients' }); return; }
+      res.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+      });
+      res.setTimeout(0); // exempt SSE from request timeout
+      sseClients.add(res);
+      try { res.write(': connected\n\n'); } catch { /* client already gone */ }
+      const drop = (): void => { sseClients.delete(res); };
+      res.on('close', drop);
+      res.on('error', drop);
+      return;
+    }
+
     notFound(res);
   };
 
