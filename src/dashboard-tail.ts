@@ -11,9 +11,11 @@ export interface NdjsonTailOptions {
 export interface NdjsonTail { stop(): void; }
 
 /**
- * Byte-offset NDJSON tail. First successful size observation primes the
- * offset (history never re-emits). Partial last lines are held back until
- * their newline lands. Unparseable lines are skipped. Never throws.
+ * Byte-offset NDJSON tail. The offset is primed from the file's size at
+ * construction (history never re-emits; a file that does not exist yet
+ * primes at 0 so its first append still emits). Partial last lines are
+ * held back until their newline lands. Unparseable lines are skipped.
+ * Never throws.
  */
 export function createNdjsonTail(opts: NdjsonTailOptions): NdjsonTail {
   let offset = 0;
