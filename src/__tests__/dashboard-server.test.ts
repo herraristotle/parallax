@@ -6,6 +6,14 @@ import * as path from 'path';
 import { startDashboard, type DashboardHandle } from '../dashboard-server';
 import { Logger } from '../logger';
 
+async function waitFor(cond: () => Promise<boolean>, timeoutMs = 3000): Promise<void> {
+  const start = Date.now();
+  while (!(await cond())) {
+    if (Date.now() - start > timeoutMs) throw new Error('waitFor timeout');
+    await new Promise(r => setTimeout(r, 10));
+  }
+}
+
 function fixture(evilEvidence?: string): any {
   return {
     probe: { cdn: { name: 'Cloudflare', confidence: 0.9 }, proxy: {}, framework: { name: 'None' }, cacheKey: {}, hiddenCacheDetected: false },
@@ -165,9 +173,15 @@ describe('dashboard-server', () => {
     const logger = new Logger('dashboard', 'debug');
     const h = await boot({ logger });
     fs.writeFileSync(path.join(dir, 'parallax-report-600.json'), JSON.stringify(fixture()));
-    await new Promise(r => setTimeout(r, 200));
-    expect(logger.getEntries().some(e => e.level === 'debug' && e.message === 'event: report-added')).toBe(true);
-    expect(logger.getEntries().some(e => e.message.includes('scan-event'))).toBe(false);
+    // Also drive the ndjson tail so the scan-event exclusion below is actually
+    // exercised — wait for the frame to reach the feed rather than sleeping, so
+    // a tail that never fires fails the test instead of passing vacuously.
+    fs.writeFileSync(path.join(dir, 'scan-events.ndjson'), JSON.stringify({ ts: 1, stage: 'discover', detail: 'd' }) + '\n');
+    await waitFor(async () => (await fetch(h.url + '/partials/feed')).text().then(t => t.includes('scan-event')), 3000);
+
+    const entries = logger.getEntries();
+    expect(entries.some(e => e.level === 'debug' && e.message === 'event: report-added')).toBe(true);
+    expect(entries.some(e => e.message.includes('scan-event'))).toBe(false);
     expect((await fetch(h.url + '/healthz')).status).toBe(200);
   });
 });
