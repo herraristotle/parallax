@@ -17,6 +17,8 @@ export interface WatcherOptions {
   intervalMs?: number;
   /** Files present at the first successful scan emit nothing (default true). */
   ignoreInitial?: boolean;
+  /** Optional logger — malformed files are warned once per mtime/size change. */
+  logger?: { warn(message: string, data?: Record<string, unknown>): void };
   onEvent: (ev: ReportChangeEvent) => void;
 }
 
@@ -59,6 +61,16 @@ export function createReportWatcher(opts: WatcherOptions): ReportWatcher {
         continue;
       }
       const prev = state.get(id);
+      const changed = !prev || prev.mtimeMs !== st.mtimeMs || prev.size !== st.size;
+      if (changed) {
+        // Parse attempt only on first sight / change, so a torn file warns once
+        // per write rather than once per poll tick.
+        try {
+          JSON.parse(fs.readFileSync(path.join(opts.dir, name), 'utf8'));
+        } catch {
+          opts.logger?.warn(`malformed report file, skipped: ${name}`, { id });
+        }
+      }
       if (!prev) {
         state.set(id, { mtimeMs: st.mtimeMs, size: st.size });
         if (!quiet) emit({ type: 'report-added', id, ts: Date.now() });

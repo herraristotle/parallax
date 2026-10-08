@@ -4,6 +4,7 @@ import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import { startDashboard, type DashboardHandle } from '../dashboard-server';
+import { Logger } from '../logger';
 
 function fixture(evilEvidence?: string): any {
   return {
@@ -151,5 +152,22 @@ describe('dashboard-server', () => {
     await h.close();
     handle = null;
     await expect(startDashboard({ outputDir: dir, port })).resolves.toBeDefined();
+  });
+
+  it('startup log carries the effective poll interval', async () => {
+    const logger = new Logger('dashboard', 'debug');
+    await boot({ pollMs: 250, logger });
+    const entry = logger.getEntries().find(e => e.message.includes('dashboard listening'));
+    expect(entry?.message).toContain('poll 250ms');
+  });
+
+  it('logs report-added at debug and never logs scan-event frames', async () => {
+    const logger = new Logger('dashboard', 'debug');
+    const h = await boot({ logger });
+    fs.writeFileSync(path.join(dir, 'parallax-report-600.json'), JSON.stringify(fixture()));
+    await new Promise(r => setTimeout(r, 200));
+    expect(logger.getEntries().some(e => e.level === 'debug' && e.message === 'event: report-added')).toBe(true);
+    expect(logger.getEntries().some(e => e.message.includes('scan-event'))).toBe(false);
+    expect((await fetch(h.url + '/healthz')).status).toBe(200);
   });
 });

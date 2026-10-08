@@ -320,6 +320,11 @@ async function main(): Promise<void> {
   }
 }
 
+process.on('unhandledRejection', reason => {
+  console.error('[Parallax] unhandled rejection:', reason);
+  process.exit(1);
+});
+
 main().catch(err => {
   console.error('Fatal error:', err);
   process.exit(1);

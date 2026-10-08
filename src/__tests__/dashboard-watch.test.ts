@@ -92,4 +92,40 @@ describe('createReportWatcher', () => {
     await new Promise(r => setTimeout(r, 80));
     expect(events).toHaveLength(2); // stopped
   });
+
+  it('warns once per write on a malformed file, not once per poll tick', async () => {
+    const dir = tmp();
+    const warns: { message: string }[] = [];
+    watcher = createReportWatcher({
+      dir, intervalMs: 20,
+      logger: { warn: m => warns.push({ message: m }) },
+      onEvent: () => undefined,
+    });
+
+    fs.writeFileSync(path.join(dir, 'parallax-report-400.json'), '{ truncated');
+    await waitFor(() => warns.length >= 1);
+    expect(warns[0].message).toContain('parallax-report-400.json');
+
+    // Several more ticks over the same unchanged bytes must not re-warn.
+    await new Promise(r => setTimeout(r, 120));
+    expect(warns).toHaveLength(1);
+
+    // A new write of malformed bytes is a fresh change -> one more warn.
+    fs.writeFileSync(path.join(dir, 'parallax-report-400.json'), '{ still broken');
+    await waitFor(() => warns.length >= 2);
+    expect(warns).toHaveLength(2);
+  });
+
+  it('does not warn on a well-formed file', async () => {
+    const dir = tmp();
+    const warns: string[] = [];
+    watcher = createReportWatcher({
+      dir, intervalMs: 20,
+      logger: { warn: m => warns.push(m) },
+      onEvent: () => undefined,
+    });
+    fs.writeFileSync(path.join(dir, 'parallax-report-500.json'), JSON.stringify(REPORT));
+    await new Promise(r => setTimeout(r, 120));
+    expect(warns).toEqual([]);
+  });
 });

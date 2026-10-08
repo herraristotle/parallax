@@ -75,6 +75,8 @@ export async function startDashboard(opts: DashboardOptions): Promise<DashboardH
   };
 
   const pushEvent = (name: string, data: Record<string, unknown>): void => {
+    // Report-change events are debug-level chatter; scan-event frames are not logged here.
+    if (name !== 'scan-event') log.debug(`event: ${name}`, { id: String(data.id ?? '') });
     feed.push({ name, data, ts: Date.now() });
     if (feed.length > 100) feed.shift();
     const frame = `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -202,15 +204,17 @@ export async function startDashboard(opts: DashboardOptions): Promise<DashboardH
 
   const actualPort = (server.address() as AddressInfo).port;
 
+  const pollMs = opts.pollMs ?? 1000;
   const watcher = createReportWatcher({
     dir: outDir,
-    intervalMs: opts.pollMs ?? 1000,
+    intervalMs: pollMs,
+    logger: log,
     onEvent: ev => pushEvent(ev.type, { id: ev.id, ts: ev.ts }),
   });
 
   const tail = createNdjsonTail({
     file: path.join(outDir, 'scan-events.ndjson'),
-    intervalMs: opts.pollMs ?? 1000,
+    intervalMs: pollMs,
     onEvent: ev => pushEvent('scan-event', { ts: ev.ts, stage: ev.stage, detail: ev.detail }),
   });
 
@@ -220,7 +224,7 @@ export async function startDashboard(opts: DashboardOptions): Promise<DashboardH
     }
   }, heartbeatMs);
 
-  log.info(`dashboard listening on ${`http://${host}:${actualPort}`} (watching ${outDir})`);
+  log.info(`dashboard listening on ${`http://${host}:${actualPort}`} (watching ${outDir}, poll ${pollMs}ms)`);
 
   let closed = false;
   const close = async (): Promise<void> => {
