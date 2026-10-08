@@ -8,6 +8,7 @@ import {
   type DashFinding, type ReportSummary,
 } from './dashboard-findings';
 import { createReportWatcher } from './dashboard-watch';
+import { createNdjsonTail } from './dashboard-tail';
 import {
   shellHtml, listPartial, tablePartial, detailPartial, findingPartial, feedPartial,
   type FeedItem,
@@ -207,6 +208,12 @@ export async function startDashboard(opts: DashboardOptions): Promise<DashboardH
     onEvent: ev => pushEvent(ev.type, { id: ev.id, ts: ev.ts }),
   });
 
+  const tail = createNdjsonTail({
+    file: path.join(outDir, 'scan-events.ndjson'),
+    intervalMs: opts.pollMs ?? 1000,
+    onEvent: ev => pushEvent('scan-event', { ts: ev.ts, stage: ev.stage, detail: ev.detail }),
+  });
+
   const heartbeat = setInterval(() => {
     for (const res of sseClients) {
       try { res.write(': hb\n\n'); } catch { /* client gone — close handler cleans up */ }
@@ -220,6 +227,7 @@ export async function startDashboard(opts: DashboardOptions): Promise<DashboardH
     if (closed) return;
     closed = true;
     watcher.stop();
+    tail.stop();
     clearInterval(heartbeat);
     for (const res of sseClients) { try { res.end(); } catch { /* ignore */ } }
     sseClients.clear();

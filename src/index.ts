@@ -21,6 +21,8 @@ export type { DashboardOptions, DashboardHandle } from './dashboard-server';
 export { flattenFindings, summarizeReport, isSafeReportId, filterFindings } from './dashboard-findings';
 export type { DashFinding, ReportSummary } from './dashboard-findings';
 export { createReportWatcher } from './dashboard-watch';
+export { createNdjsonTail } from './dashboard-tail';
+export type { NdjsonTail, NdjsonTailOptions } from './dashboard-tail';
 export { shellHtml, listPartial, tablePartial, detailPartial, findingPartial, feedPartial, escapeHtml } from './dashboard-ui';
 
 export type {
