@@ -21,11 +21,13 @@ describe('appendScanEvent', () => {
     expect(b.stage).toBe('poison');
   });
 
-  it('swallows errors: unwritable dir (path is a file) does not throw (Review Focus: scan must not fail)', () => {
+  it('swallows errors: any mkdir failure (path is a file; child under a file) does not throw (Review Focus: scan must not fail)', () => {
     const asFile = path.join(dir, 'not-a-dir');
     fs.writeFileSync(asFile, 'x');
     expect(() => appendScanEvent(asFile, { ts: 1, stage: 'probe' })).not.toThrow();
-    expect(() => appendScanEvent('/proc/definitely/not/writable-here', { ts: 1, stage: 'probe' })).not.toThrow();
+    // Nested under the existing file: ENOTDIR/ENOENT on every platform (no drive-root
+    // relative paths — those would resolve to C:\ on win32 and actually create a tree).
+    expect(() => appendScanEvent(path.join(asFile, 'child'), { ts: 1, stage: 'probe' })).not.toThrow();
   });
 });
 
