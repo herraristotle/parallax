@@ -35,6 +35,8 @@ Options:
   --no-deception            Disable web cache deception probing
   --no-internal             Disable internal cache / ESI detection (Stage 5b)
   --no-weaponize            Disable exploit chain generation
+  --execute                 Stage 8: replay weaponize PoCs against the target (autonomous exploit)
+  --payload-host <host>     Public hostname serving malicious JS for host-override exploits
   --http2                   Route GETs over HTTP/2 (falls back to HTTP/1.1)
   --bigquery-project <id>   GCP project for Stage-2 BigQuery header harvest
                             (creds via GOOGLE_APPLICATION_CREDENTIALS)
@@ -137,6 +139,12 @@ async function main(): Promise<void> {
         break;
       case '--no-weaponize':
         config.enableWeaponize = false;
+        break;
+      case '--execute':
+        config.enableExecute = true;
+        break;
+      case '--payload-host':
+        config.payloadHost = args[++i];
         break;
       case '--no-scan-events':
         config.enableDashboardEvents = false;

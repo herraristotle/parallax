@@ -206,25 +206,38 @@ export class CachePoison {
     const testHeaders = headers.filter(h => !keyedHeaders.has(h.toLowerCase()));
     const ordered = this.reorderHeaders(testHeaders, cdnName);
 
-    // Get baseline response
-    const baseline = await this.http.get(this.config.target, this.config.headers || {});
+    // Baseline: retry transient failures (504s under load); all-fail → skip poison, don't kill the scan
+    let baseline: HttpResponse | null = null;
+    for (let attempt = 0; attempt < 3 && !baseline; attempt++) {
+      try {
+        const b = await this.http.get(this.config.target, this.config.headers || {});
+        if (b.status < 500) baseline = b;
+      } catch {
+        // transient — retry
+      }
+    }
+    if (!baseline) return this.findings;
 
     const batchSize = 20;
     for (let i = 0; i < ordered.length; i += batchSize) {
       const batch = ordered.slice(i, i + batchSize);
-      const batchResult = await this.testBatch(batch, baseline);
+      try {
+        const batchResult = await this.testBatch(batch, baseline);
 
-      if (batchResult.hasSignal) {
-        const isolated = await this.binarySearch(batch, baseline);
-        for (const finding of isolated) {
-          const { oracle, confirmed } = await this.cacheKeyOracle(finding);
-          finding.oracle = oracle;
-          if (confirmed) {
-            const classified = this.classifyExploit(finding);
-            this.findings.push(classified);
-            await this.runAdditionalModules(classified);
+        if (batchResult.hasSignal) {
+          const isolated = await this.binarySearch(batch, baseline);
+          for (const finding of isolated) {
+            const { oracle, confirmed } = await this.cacheKeyOracle(finding);
+            finding.oracle = oracle;
+            if (confirmed) {
+              const classified = this.classifyExploit(finding);
+              this.findings.push(classified);
+              await this.runAdditionalModules(classified);
+            }
           }
         }
+      } catch {
+        // Transient request failure — skip this batch, keep scanning
       }
     }
 
@@ -485,6 +498,11 @@ async testSingleHeader(header: string, baseline: HttpResponse): Promise<PoisonFi
     }
 
     finding.confidence = 'LIKELY';
+    // Map detected body context → exploit payload selector
+    if (s.bodyContext === 'script_tag') finding.reflectionContext = 'js';
+    else if (s.bodyContext === 'attribute_url') finding.reflectionContext = 'attribute';
+    else if (body) finding.reflectionContext = 'html';
+    else finding.reflectionContext = 'unknown';
     return finding;
   }
 

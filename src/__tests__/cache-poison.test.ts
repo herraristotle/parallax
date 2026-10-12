@@ -258,3 +258,33 @@ describe('CachePoison OOB modules', () => {
     expect(poison.findings).toHaveLength(0);
   });
 });
+
+describe('CachePoison.run network resilience', () => {
+  function flakyClient(failOn: Set<number>) {
+    const state = { calls: 0 };
+    const client = {
+      get: async () => {
+        state.calls++;
+        if (failOn.has(state.calls)) throw new Error('ECONNRESET');
+        return { status: 200, headers: {}, body: 'ok' };
+      },
+    } as unknown as import('../http-client').HttpClient;
+    return { client, state };
+  }
+
+  it('retries a failed baseline request instead of aborting the scan', async () => {
+    const { client, state } = flakyClient(new Set([1])); // baseline throws once
+    const poison = new CachePoison({ target: 'https://example.com' }, client);
+    const findings = await poison.run([]);
+    expect(findings).toBeDefined();
+    expect(state.calls).toBeGreaterThan(2); // recovered and kept scanning
+  });
+
+  it('skips a failed batch and continues with the rest', async () => {
+    const { client, state } = flakyClient(new Set([2])); // batch 1 throws
+    const poison = new CachePoison({ target: 'https://example.com' }, client);
+    const findings = await poison.run([]);
+    expect(findings).toBeDefined();
+    expect(state.calls).toBeGreaterThan(2); // later batches still ran
+  });
+});

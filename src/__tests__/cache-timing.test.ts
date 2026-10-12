@@ -45,4 +45,20 @@ describe('CacheTiming', () => {
     expect(busters).toHaveProperty('x-forwarded-scheme');
     expect(busters).toHaveProperty('x-method-override');
   });
+
+  it('should continue timing analysis when some pairs fail', async () => {
+    let callCount = 0;
+    const flakyClient = {
+      get: async () => {
+        callCount++;
+        if (callCount === 2 || callCount === 5) throw new Error('Transient failure');
+        return { status: 200, body: '', headers: {}, fromCache: false };
+      }
+    };
+    const timing = new CacheTiming({ target: 'https://example.com', pairsPerGroup: 3 }, flakyClient as any);
+    const result = await timing.detectHiddenCache();
+    // Should complete despite 2 failures (2 pairs fail → 4 fewer timings collected, but still runs)
+    expect(callCount).toBeGreaterThan(4);
+    expect(result.hiddenCacheDetected).toBeDefined();
+  });
 });

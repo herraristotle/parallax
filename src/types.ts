@@ -88,6 +88,10 @@ export interface PipelineConfig {
   enableDashboardEvents?: boolean;
   /** Where reports + scan-events.ndjson are written; defaults to './output'. */
   outputDir?: string;
+  /** Stage 8: replay weaponize PoCs against the target (autonomous exploit). */
+  enableExecute?: boolean;
+  /** Public hostname serving malicious JS for host-override exploits (X-Forwarded-Host etc.). */
+  payloadHost?: string;
 }
 
 export interface PipelineResult {
@@ -177,6 +181,8 @@ export interface CacheKeyComponent {
 export interface CacheKeySpec extends CacheKeyComponent {
   rawHeaders: Record<string, string>;
   timestamp: string;
+  /** Query params the cache ignores (value not part of the key) — see detectUnkeyedQueryParams. */
+  unkeyedParams?: string[];
 }
 
 export interface HeaderSource {
@@ -282,6 +288,8 @@ export interface PoisonFinding {
   attackClass: 'cpdos' | 'waf_poison' | 'content_poison' | 'header_poison';
   confidence: 'CONFIRMED' | 'LIKELY' | 'POSSIBLE';
   blastRadius: BlastRadius;
+  /** Where the canary was reflected — drives exploit payload selection. */
+  reflectionContext?: 'html' | 'js' | 'attribute' | 'host' | 'header' | 'unknown';
 }
 
 export type ExploitClassification =

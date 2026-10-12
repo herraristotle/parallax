@@ -12,6 +12,7 @@ import { InteractshClient } from './oob';
 import { CacheInternal } from './cache-internal';
 import { TraceSink } from './trace';
 import { appendScanEvent } from './scan-events';
+import { ExploitExecutor } from './exploit';
 
 /**
  * ParallaxPipeline — Five-stage differential cache analysis pipeline
@@ -34,6 +35,12 @@ export class ParallaxPipeline {
   private httpClient: HttpClient;
   private oob: InteractshClient | null = null;
   private trace?: TraceSink;
+  /** Query params found unkeyed by probe — counted as findings in run.summary. */
+  private unkeyedParams: string[] = [];
+  /** Deception findings from stage 4b — counted in run.summary. */
+  private deceptionCount: number = 0;
+  /** Confirmed exploit executions (stage 8) — counted in run.summary. */
+  private executedSolved: number = 0;
 
   constructor(config: PipelineConfig) {
     this.config = config;
@@ -75,13 +82,26 @@ export class ParallaxPipeline {
       return await this.runStages();
     } finally {
       this.trace?.summary({
-        findings:
-          this.poison.findings.length +
-          this.weaponize.results.length +
-          (this.diff.results.length > 0 ? 1 : 0),
+        findings: this.summaryFindings(),
         tools: { external: this.config.external === true },
       });
     }
+  }
+
+  /** Pull probe-side findings (unkeyed query params) into summary scope. */
+  private captureProbeFindings(probeResult: { cacheKey?: { unkeyedParams?: string[] } }): void {
+    this.unkeyedParams = probeResult.cacheKey?.unkeyedParams ?? [];
+  }
+
+  private summaryFindings(): number {
+    return (
+      this.poison.findings.length +
+      this.weaponize.results.length +
+      (this.diff.results.length > 0 ? 1 : 0) +
+      this.unkeyedParams.length +
+      this.deceptionCount +
+      this.executedSolved
+    );
   }
 
   private async runStages(): Promise<PipelineResult> {
@@ -111,6 +131,7 @@ export class ParallaxPipeline {
     this.trace?.setStage('probe');
     checkTimeBudget();
     const probeResult = await this.probe.run();
+    this.captureProbeFindings(probeResult);
     this.emitEvent('probe', `cdn=${probeResult.cdn.name}`);
     
     // Update poison config with detected CDN and framework
@@ -171,6 +192,7 @@ export class ParallaxPipeline {
         this.emitEvent('deception', `${findings.length} finding(s)`);
         if (findings.length > 0) {
           deceptionFindings = findings;
+          this.deceptionCount = findings.length;
           console.log(`[Parallax]   ${findings.length} deception finding(s), ${findings.filter(f => f.confirmed).length} confirmed`);
         }
       } catch {
@@ -228,8 +250,85 @@ export class ParallaxPipeline {
       console.log('[Parallax] Stage 7: PoC Generation + Blast Radius');
       this.trace?.setStage('weaponize');
       checkTimeBudget();
-      await this.weaponize.run(this.poison.findings);
+      try {
+        await this.weaponize.run(this.poison.findings);
+      } catch {
+        // Weaponize is best-effort — never fail the scan.
+      }
       this.emitEvent('weaponize', `${this.weaponize.results.length} chain(s)`);
+    }
+
+    // Stage 8: Execute — replay weaponize PoCs against the target (autonomous exploit).
+    // Best-effort: never fails the scan. Skipped unless explicitly enabled.
+    if (this.config.enableExecute === true) {
+      console.log('[Parallax] Stage 8: Autonomous exploit execution');
+      this.trace?.setStage('execute');
+      checkTimeBudget();
+      try {
+        const executor = new ExploitExecutor({
+          target: this.config.target,
+          cookie: this.config.cookie,
+          headers: this.config.headers,
+          payloadHost: this.config.payloadHost,
+          http: this.httpClient,
+        });
+        let solved = 0;
+        for (const finding of this.poison.findings) {
+          try {
+            // Browser confirmation fires alert() → PortSwigger-style lab hooks report the solve.
+            const r = await executor.execute(finding);
+            if (r.cachePoisoned) {
+              solved++;
+              console.log(`[Parallax]   executed ${finding.classification} via ${finding.inputName} → cache poisoned`);
+            }
+          } catch {
+            // Per-finding failure — keep executing the rest.
+          }
+        }
+        // Deception execution: prime with auth, verify unauthenticated leak.
+        if (deceptionFindings) {
+          for (const d of deceptionFindings) {
+            try {
+              const r = await executor.executeDeception(d.endpoint, d.attackUrl, this.config.cookie);
+              if (r.leaked) {
+                solved++;
+                console.log(`[Parallax]   executed deception leak on ${d.attackUrl}`);
+              }
+            } catch {
+              // Best-effort.
+            }
+          }
+        }
+        // Reflection-gadget execution (Param Miner / HCache style): brute-force
+        // params for unkeyed+reflected sinks, then poison with context-correct
+        // XSS payload and confirm in headless browser.
+        try {
+          const extras =
+            this.config.wordlistTier === 'all' ? CacheProbe.bundledParamWordlist() : undefined;
+          const gadgets = await this.probe.discoverReflectionGadgets(this.httpClient, extras, { mineTarget: true });
+          if (gadgets.length > 0) {
+            this.emitEvent('gadgets', `${gadgets.length} found`);
+            console.log(`[Parallax]   ${gadgets.length} reflection gadget(s): ${gadgets.map(g => `${g.param}(${g.context})`).join(', ')}`);
+          }
+          for (const gadget of gadgets) {
+            try {
+              const r = await executor.executeGadget(gadget);
+              if (r.cachePoisoned) {
+                solved++;
+                console.log(`[Parallax]   executed gadget ${gadget.param} (${gadget.context}) → cache poisoned${r.alertFired ? ', alert fired' : ''}`);
+              }
+            } catch {
+              // Per-gadget failure — keep going.
+            }
+          }
+        } catch {
+          // Gadget discovery is best-effort.
+        }
+        this.executedSolved = solved;
+        this.emitEvent('execute', `${solved} confirmed`);
+      } catch {
+        // Execution pass is best-effort; never fail the scan.
+      }
     }
 
     const result: PipelineResult = {

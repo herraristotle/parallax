@@ -1,5 +1,7 @@
 import { CacheProbeConfig, ProbeResult, CDNFingerprint, ProxyFingerprint, FrameworkFingerprint, CacheKeySpec } from './types';
 import { HttpClient, HttpResponse } from './http-client';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const CF_EMAIL_RE = /data-cfemail="[a-f0-9]+"/gi;
 
@@ -255,6 +257,7 @@ export class CacheProbe {
     results.port = await this.testCacheComponent(client, 'port');
     results.fragmentStripped = await this.testCacheComponent(client, 'fragment');
     results.headersKeyed = await this.detectKeyedHeaders(client);
+    results.unkeyedParams = await this.detectUnkeyedQueryParams(client);
 
     return results;
   }
@@ -299,6 +302,174 @@ export class CacheProbe {
       }
     }
     return keyed;
+  }
+
+  /** Ad-tech / analytics params commonly excluded from cache keys (Param Miner hot list). */
+  private static readonly QUERY_PARAM_CANDIDATES = [
+    'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+    'gclid', 'fbclid', 'msclkid', 'mc_cid', 'mc_eid', 'pc_probe',
+  ];
+
+  /**
+   * Reflection-gadget param candidates — common app params (HCache
+   * parameters.txt head + PortSwigger favourites). Full 6,452-param list
+   * loads via loadParamWordlist(path) and discoverReflectionGadgets extras.
+   */
+  private static readonly GADGET_PARAM_CANDIDATES = [
+    'q', 's', 'search', 'id', 'page', 'pg', 'p', 'url', 'uri', 'redirect',
+    'redir', 'next', 'return', 'continue', 'dest', 'destination', 'target',
+    'host', 'site', 'domain', 'callback', 'cb', 'debug', 'test', 'nc',
+    'lang', 'language', 'file', 'path', 'dir', 'folder', 'doc', 'document',
+    'view', 'show', 'type', 'mode', 'format', 'output', 'data', 'item',
+    'name', 'title', 'ref', 'source', 'src', 'feed', 'cat', 'category',
+    'template', 'include', 'module', 'action', 'load', 'read', 'open',
+    'filename', 'cid', 'uuid', 'price', 'products', 'product', 'cart',
+    ...CacheProbe.QUERY_PARAM_CANDIDATES,
+  ];
+
+  /** Load a newline-delimited param wordlist (e.g. HCache parameters.txt). */
+  static loadParamWordlist(path: string): string[] {
+    return fs
+      .readFileSync(path, 'utf8')
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l && !l.startsWith('#'));
+  }
+
+  /**
+   * Bundled HCache/Param-Miner param wordlist (6,452 entries) that ships with
+   * the package. Resolved relative to this module so it works from src/ and dist/.
+   */
+  static bundledParamWordlist(): string[] {
+    const candidates = [
+      path.join(__dirname, '..', 'wordlists', 'parameters.txt'),
+      path.join(__dirname, '..', '..', 'wordlists', 'parameters.txt'),
+    ];
+    for (const p of candidates) {
+      try {
+        if (fs.existsSync(p)) return CacheProbe.loadParamWordlist(p);
+      } catch {
+        // try next candidate
+      }
+    }
+    return [];
+  }
+
+  /**
+   * Target-specific param mining (ParamFinder-style): extract param names from
+   * the target's own HTML/JS — links, forms, fetch/XHR calls. Catches
+   * app-specific params no static wordlist knows.
+   */
+  async mineTargetParams(http?: HttpClient): Promise<string[]> {
+    const client = http || new HttpClient({ timeoutMs: 10000, rateLimitPerSec: 5 });
+    const found = new Set<string>();
+    try {
+      const r = await client.get(this.config.target, this.config.headers || {});
+      const body = r.body;
+      // ?param= and &param= in URLs (hrefs, fetch strings)
+      for (const m of body.matchAll(/[?&]([a-zA-Z_][a-zA-Z0-9_]{1,40})=/g)) {
+        found.add(m[1]);
+      }
+      // form inputs: name="param"
+      for (const m of body.matchAll(/name=["']([a-zA-Z_][a-zA-Z0-9_]{1,40})["']/gi)) {
+        found.add(m[1]);
+      }
+      // filter obvious HTML/JS noise
+      const noise = new Set([
+        'href', 'src', 'class', 'id', 'style', 'type', 'value', 'alt', 'rel',
+        'const', 'let', 'var', 'function', 'return', 'import', 'export',
+      ]);
+      for (const n of noise) found.delete(n);
+    } catch {
+      // Mining is best-effort
+    }
+    return [...found];
+  }
+
+  /**
+   * Reflection-gadget discovery (Param Miner / HCache style). Phase 1 sweeps
+   * the wordlist for params whose value reflects in the response body; phase 2
+   * confirms each reflected param is ALSO unkeyed (second value gets the
+   * first value's cached entry). Only unkeyed+reflected params are gadgets —
+   * poisonable XSS sinks.
+   */
+  async discoverReflectionGadgets(
+    http?: HttpClient,
+    extraParams?: string[],
+    opts?: { mineTarget?: boolean },
+  ): Promise<Array<{ param: string; context: 'js' | 'attribute' | 'html' }>> {
+    const client = http || new HttpClient({ timeoutMs: 10000, rateLimitPerSec: 10 });
+    // Default: curated fast candidates (incl. nc). Full 6,452-param sweep
+    // via extraParams=CacheProbe.bundledParamWordlist() ('all' tier).
+    let params = extraParams?.length ? extraParams : CacheProbe.GADGET_PARAM_CANDIDATES;
+    if (opts?.mineTarget) {
+      const mined = await this.mineTargetParams(client);
+      const seen = new Set(params);
+      for (const p of mined) if (!seen.has(p)) { params = [...params, p]; seen.add(p); }
+    }
+    const gadgets: Array<{ param: string; context: 'js' | 'attribute' | 'html' }> = [];
+    for (const param of params) {
+      try {
+        const v1 = `pcg${Math.random().toString(36).substring(2, 10)}`;
+        const u1 = new URL(this.config.target);
+        u1.searchParams.set(param, v1);
+        const r1 = await client.get(u1.toString(), this.config.headers || {});
+        if (!r1.body.includes(v1)) continue; // not reflected → no gadget
+        const context = this.classifyReflection(r1.body, v1);
+        // Unkeyed check: different value; cache serving v1's entry back = unkeyed
+        const v2 = `pcg${Math.random().toString(36).substring(2, 10)}`;
+        const u2 = new URL(this.config.target);
+        u2.searchParams.set(param, v2);
+        const r2 = await client.get(u2.toString(), this.config.headers || {});
+        const servesStale =
+          (r2.fromCache && r2.body.includes(v1) && !r2.body.includes(v2)) ||
+          r2.body === r1.body;
+        if (servesStale) gadgets.push({ param, context });
+      } catch {
+        // Skip failed probes
+      }
+    }
+    return gadgets;
+  }
+
+  /** Classify where the canary sits: inside a script block, inside a tag, or plain HTML. */
+  private classifyReflection(body: string, canary: string): 'js' | 'attribute' | 'html' {
+    const idx = body.indexOf(canary);
+    if (idx === -1) return 'html';
+    const before = body.slice(Math.max(0, idx - 200), idx);
+    const lastScriptOpen = before.lastIndexOf('<script');
+    const lastScriptClose = before.lastIndexOf('</script>');
+    if (lastScriptOpen > lastScriptClose) return 'js';
+    const lastTagOpen = before.lastIndexOf('<');
+    const lastTagClose = before.lastIndexOf('>');
+    if (lastTagOpen > lastTagClose) return 'attribute'; // value sits inside a tag
+    return 'html';
+  }
+
+  /**
+   * Query dim of cache-key reversal. Same URL, two values per candidate: a
+   * keyed param gives value2 a fresh entry (MISS); an unkeyed one makes the
+   * cache serve value1's entry back (HIT + identical body) → flag it.
+   */
+  async detectUnkeyedQueryParams(http?: HttpClient): Promise<string[]> {
+    const client = http || new HttpClient({ timeoutMs: 10000, rateLimitPerSec: 5 });
+    const unkeyed: string[] = [];
+    for (const param of CacheProbe.QUERY_PARAM_CANDIDATES) {
+      try {
+        const v1 = `pc${Math.random().toString(36).substring(2, 10)}a`;
+        const v2 = `pc${Math.random().toString(36).substring(2, 10)}b`;
+        const u1 = new URL(this.config.target);
+        u1.searchParams.set(param, v1);
+        const u2 = new URL(this.config.target);
+        u2.searchParams.set(param, v2);
+        const r1 = await client.get(u1.toString(), this.config.headers || {});
+        const r2 = await client.get(u2.toString(), this.config.headers || {});
+        if (r2.fromCache && r2.body === r1.body) unkeyed.push(param);
+      } catch {
+        // Skip failed probes
+      }
+    }
+    return unkeyed;
   }
 
   private async testCacheComponent(http: HttpClient, component: string): Promise<boolean> {

@@ -60,19 +60,27 @@ export class CacheTiming {
     for (let i = 0; i < this.config.pairsPerGroup; i++) {
       await this.sleep(500);
 
-      // Randomized group: both fresh cache busters
-      const randBuster1 = this.randomString(8);
-      const randBuster2 = this.randomString(8);
-      const [t1, t2] = await this.sendPairedRequests(randBuster1, randBuster2);
-      randomizedTimings.push(t2 - t1);
+      try {
+        // Randomized group: both fresh cache busters
+        const randBuster1 = this.randomString(8);
+        const randBuster2 = this.randomString(8);
+        const [t1, t2] = await this.sendPairedRequests(randBuster1, randBuster2);
+        randomizedTimings.push(t2 - t1);
+      } catch {
+        // Skip failed pair (transient network/timeout)
+      }
 
-      // Fixed group: first fresh, second previously used
-      const freshBuster = this.randomString(8);
-      const fixedBuster = previouslyUsedCacheBusters[0] || this.randomString(8);
-      previouslyUsedCacheBusters.push(freshBuster);
+      try {
+        // Fixed group: first fresh, second previously used
+        const freshBuster = this.randomString(8);
+        const fixedBuster = previouslyUsedCacheBusters[0] || this.randomString(8);
+        previouslyUsedCacheBusters.push(freshBuster);
 
-      const [t3, t4] = await this.sendPairedRequests(freshBuster, fixedBuster);
-      fixedTimings.push(t4 - t3);
+        const [t3, t4] = await this.sendPairedRequests(freshBuster, fixedBuster);
+        fixedTimings.push(t4 - t3);
+      } catch {
+        // Skip failed pair
+      }
     }
 
     // Outlier removal
