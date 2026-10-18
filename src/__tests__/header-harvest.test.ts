@@ -17,6 +17,12 @@ describe('HeaderHarvest', () => {
     expect(harvest).toBeDefined();
   });
 
+  it('loads bundled header and parameter wordlists by default', async () => {
+    const harvest = new HeaderHarvest();
+    expect(await harvest.harvestUncommonHeaders()).toContain('accept');
+    expect(await harvest.loadParameters()).toContain('id');
+  });
+
   it('should return empty array when files not found', async () => {
     const harvest = new HeaderHarvest({ headersFile: '/nonexistent/headers.txt', parametersFile: '/nonexistent/parameters.txt' });
     const headers = await harvest.harvestUncommonHeaders();

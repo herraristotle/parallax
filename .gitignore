@@ -12,4 +12,5 @@ Thumbs.db
 # Temporary
 /tmp/
 .playwright-mcp/
+.superpowers/
 output/

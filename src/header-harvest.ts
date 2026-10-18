@@ -29,8 +29,8 @@ export class HeaderHarvest {
       highThreshold: 5000,
       ...config,
     };
-    this.headersFile = config.headersFile || path.join(__dirname, '..', '..', '..', '..', 'cache', 'HCache', 'headers.txt');
-    this.parametersFile = config.parametersFile || path.join(__dirname, '..', '..', '..', '..', 'cache', 'HCache', 'parameters.txt');
+    this.headersFile = config.headersFile || path.join(__dirname, '..', 'wordlists', 'headers.txt');
+    this.parametersFile = config.parametersFile || path.join(__dirname, '..', 'wordlists', 'parameters.txt');
   }
 
   /** Live HTTP Archive harvest; undefined when unconfigured or on any failure. */

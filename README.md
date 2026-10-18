@@ -9,6 +9,17 @@ npm install
 npm run build        # emits dist/, including dist/cli.js
 ```
 
+## Prebuilt binaries
+
+Download the executable for your platform from the [GitHub Releases](https://github.com/jeffpecky/parallax/releases) page. Releases include Windows x64, Linux x64, macOS x64, and macOS Apple Silicon builds; Node.js is not required to run them.
+
+The GitHub Actions workflow runs the test suite and TypeScript build on pushes and pull requests to `master`. Push a version tag such as `v1.0.1` to build and publish the platform executables:
+
+```bash
+git tag v1.0.1
+git push origin v1.0.1
+```
+
 ## Usage
 
 ```bash
