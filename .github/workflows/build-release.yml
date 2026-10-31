@@ -53,7 +53,9 @@ jobs:
         run: |
           set -e
           sudo apt-get update && sudo apt-get install -y chromium
-          export CHROME_PATH="$(command -v chromium || command -v chromium-browser)"
+          # Persist across steps: each step is a fresh shell, so a plain export
+          # would be gone by the global-install gate below.
+          echo "CHROME_PATH=$(command -v chromium || command -v chromium-browser)" >> "$GITHUB_ENV"
           node -e '
             (async () => {
               const puppeteer = require("puppeteer-core");
