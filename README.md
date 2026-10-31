@@ -9,16 +9,39 @@ npm install
 npm run build        # emits dist/, including dist/cli.js
 ```
 
-## Prebuilt binaries
+## Release tarball
 
-Download the executable for your platform from the [GitHub Releases](https://github.com/jeffpecky/parallax/releases) page. Releases include Windows x64, Linux x64, macOS x64, and macOS Apple Silicon builds; Node.js is not required to run them.
-
-The GitHub Actions workflow runs the test suite and TypeScript build on pushes and pull requests to `master`. Push a version tag such as `v1.0.1` to build and publish the platform executables:
+Each tagged release publishes one asset, `mastermind-parallax-<version>.tgz` — an npm
+package carrying the compiled `dist/`, the bundled `wordlists/` and `src/vendor/`. Install
+it globally; npm pulls its dependencies and links the `parallax` bin:
 
 ```bash
-git tag v1.0.1
-git push origin v1.0.1
+npm install -g ./mastermind-parallax-1.0.2.tgz
+parallax --help
 ```
+
+It is not a single-file executable: Stage 8 (`--execute`) drives Playwright, which resolves
+JS by runtime path and needs `browsers.json`. A pkg snapshot cannot host that (no
+`browsers.json`, no inspector) and a bun `--compile` bundle only finds playwright when
+`node_modules` sits beside the binary. That is why the previous platform executables shipped
+with browser confirmation silently dead. The browser itself lives outside the package, so
+install it once with this package's own playwright (revision must match):
+
+```bash
+"$(npm root -g)/@mastermind/parallax/node_modules/.bin/playwright" install --with-deps chromium
+```
+
+Push a version tag such as `v1.0.2` to build and publish it:
+
+```bash
+git tag v1.0.2
+git push origin v1.0.2
+```
+
+CI gates the release on the three things that previously broke silently: Playwright launches
+a real browser and fires an alert, the compiled CLI runs with its runtime assets, and a
+global install of the packed tarball both runs by name and launches a browser from the
+installed tree.
 
 ## Usage
 

@@ -273,6 +273,7 @@ export class ParallaxPipeline {
           http: this.httpClient,
         });
         let solved = 0;
+        let browserWarned = false;
         for (const finding of this.poison.findings) {
           try {
             // Browser confirmation fires alert() → PortSwigger-style lab hooks report the solve.
@@ -280,6 +281,12 @@ export class ParallaxPipeline {
             if (r.cachePoisoned) {
               solved++;
               console.log(`[Parallax]   executed ${finding.classification} via ${finding.inputName} → cache poisoned`);
+            }
+            // A cache poison with no browser confirmation is HTTP-only evidence.
+            // Say so once per cause instead of dropping it on the floor.
+            if (r.browserError && !browserWarned) {
+              browserWarned = true;
+              console.warn(`[Parallax]   ${r.browserError} — cache poisons below are HTTP-confirmed only`);
             }
           } catch {
             // Per-finding failure — keep executing the rest.
@@ -316,6 +323,10 @@ export class ParallaxPipeline {
               if (r.cachePoisoned) {
                 solved++;
                 console.log(`[Parallax]   executed gadget ${gadget.param} (${gadget.context}) → cache poisoned${r.alertFired ? ', alert fired' : ''}`);
+                if (r.browserError && !browserWarned) {
+                  browserWarned = true;
+                  console.warn(`[Parallax]   ${r.browserError} — cache poisons below are HTTP-confirmed only`);
+                }
               }
             } catch {
               // Per-gadget failure — keep going.
