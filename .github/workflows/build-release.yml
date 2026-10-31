@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm test
@@ -80,7 +80,14 @@ jobs:
           kill "$PID" 2>/dev/null || true
 
       - name: Pack
-        run: mkdir -p release && npm pack --pack-destination release
+        # npm names the file after the package (scope stripped):
+        # @mastermind/parallax -> mastermind-parallax-<ver>.tgz. The release asset is
+        # named parallax-<ver>.tgz instead; `npm install -g <url>` reads the package
+        # name from inside the tarball, so the filename is free to be the tool name.
+        run: |
+          mkdir -p release
+          npm pack --pack-destination release
+          mv release/*.tgz "release/parallax-${GITHUB_REF_NAME#v}.tgz"
 
       # Parity with the only real consumer (Artex): install the packed tarball
       # globally, then launch a browser from THAT installed tree. This is what
