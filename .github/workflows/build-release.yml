@@ -55,13 +55,13 @@ jobs:
           sudo apt-get update && sudo apt-get install -y chromium
           # Two things: export for THIS step (GITHUB_ENV only affects later
           # steps), and GITHUB_ENV so the global-install gate below inherits it.
-          export CHROME_PATH="$(command -v chromium || command -v chromium-browser)"
-          echo "CHROME_PATH=$CHROME_PATH" >> "$GITHUB_ENV"
+          export CHROMIUM="$(command -v chromium || command -v chromium-browser)"
+          echo "CHROMIUM=$CHROMIUM" >> "$GITHUB_ENV"
           node -e '
             (async () => {
               const puppeteer = require("puppeteer-core");
               const browser = await puppeteer.launch({
-                executablePath: process.env.CHROME_PATH,
+                executablePath: process.env.CHROMIUM,
                 headless: true,
                 args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
               }).catch((e) => { console.error("launch failed:", e.message); return null; });
@@ -117,7 +117,7 @@ jobs:
             (async () => {
               const puppeteer = require(path.join(root, 'node_modules/puppeteer-core'));
               const browser = await puppeteer.launch({
-                executablePath: process.env.CHROME_PATH,
+                executablePath: process.env.CHROMIUM,
                 headless: true,
                 args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
               }).catch(() => null);
