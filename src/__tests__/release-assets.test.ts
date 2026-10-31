@@ -29,9 +29,12 @@ describe('release tarball contents', () => {
     }
   });
 
-  it('ships a runnable bin and keeps playwright as a runtime dependency', () => {
+  it('ships a runnable bin and keeps the browser library as a runtime dependency', () => {
     expect(pkg.bin.parallax).toBe('./dist/cli.js');
-    // Stage 8 lazy-loads playwright at runtime; a devDependency would omit it.
-    expect(pkg.dependencies.playwright).toBeTruthy();
+    // Stage 8 lazy-loads the browser library at runtime; a devDependency would
+    // omit it from the tarball. puppeteer-core is used because it bundles no
+    // browser, so it reuses the one on the box.
+    expect(pkg.dependencies['puppeteer-core']).toBeTruthy();
+    expect(pkg.dependencies.playwright).toBeUndefined();
   });
 });

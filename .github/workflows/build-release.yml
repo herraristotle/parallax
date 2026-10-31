@@ -44,31 +44,33 @@ jobs:
       - run: npm run build
 
       # ---------------------------------------------------------------------
-      # Why a tarball and not a single-file binary: Stage 8 (--execute) drives
-      # Playwright, which resolves JS by runtime path and needs browsers.json.
-      # A @yao-pkg/pkg snapshot cannot host that (no browsers.json, no
-      # inspector) and a bun --compile bundle only finds playwright when
-      # node_modules sits beside the binary. npm i -g installs the tarball's
-      # dependencies from the registry and links the bin — no staging needed.
+      # The browser is puppeteer-core + a system Chromium, not a bundled one:
+      # Stage 8 (--execute) only needs to open a page and watch for alert(), and
+      # puppeteer-core never downloads its own ~400MB browser. Install one
+      # Chromium here so the launch gate below has something to drive.
       # ---------------------------------------------------------------------
-      - name: Gate — Playwright launches from the package
+      - name: Gate — browser launches and fires a dialog
         run: |
           set -e
-          # Install the revision this package's playwright asks for.
-          npx playwright install --with-deps chromium
+          sudo apt-get update && sudo apt-get install -y chromium
+          export CHROME_PATH="$(command -v chromium || command -v chromium-browser)"
           node -e '
             (async () => {
-              const { chromium } = require("playwright");
-              const browser = await chromium.launch({ headless: true }).catch(() => null);
-              if (!browser) { console.error("playwright launch failed"); process.exit(1); }
+              const puppeteer = require("puppeteer-core");
+              const browser = await puppeteer.launch({
+                executablePath: process.env.CHROME_PATH,
+                headless: true,
+                args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+              }).catch((e) => { console.error("launch failed:", e.message); return null; });
+              if (!browser) process.exit(1);
               const page = await browser.newPage();
               let fired = false;
               page.on("dialog", async (d) => { fired = true; await d.dismiss(); });
               await page.goto("data:text/html,<script>alert(1)</script>").catch(() => {});
-              await page.waitForTimeout(500);
+              await new Promise((r) => setTimeout(r, 500));
               await browser.close();
               if (!fired) { console.error("alert dialog never fired"); process.exit(1); }
-              console.log("playwright alert confirmation ok");
+              console.log("alert confirmation ok");
             })().catch((e) => { console.error(e); process.exit(1); });
           '
 
@@ -108,8 +110,12 @@ jobs:
               console.log('present:', f);
             }
             (async () => {
-              const { chromium } = require(path.join(root, 'node_modules/playwright'));
-              const browser = await chromium.launch({ headless: true }).catch(() => null);
+              const puppeteer = require(path.join(root, 'node_modules/puppeteer-core'));
+              const browser = await puppeteer.launch({
+                executablePath: process.env.CHROME_PATH,
+                headless: true,
+                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+              }).catch(() => null);
               if (!browser) { console.error('installed copy cannot launch a browser'); process.exit(1); }
               await browser.close();
               console.log('installed copy launches a browser');
